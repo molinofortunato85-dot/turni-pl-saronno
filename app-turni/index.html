@@ -1,0 +1,3049 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestione Turni & Servizi PL - Cloud Sincronizzato</title>
+  <!-- Collegamento al Manifest per la generazione dell'APK -->
+  <link rel="manifest" href="manifest.json">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    [v-cloak] { display: none; }
+    .custom-scroll::-webkit-scrollbar { height: 10px; width: 8px; }
+    .custom-scroll::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 6px; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 6px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: #1d4ed8; }
+    
+    .col-fixed-header {
+      position: sticky !important;
+      left: 0 !important;
+      z-index: 35 !important;
+      background-color: #f1f5f9 !important;
+      box-shadow: 4px 0 6px -1px rgba(0, 0, 0, 0.12);
+    }
+    .col-fixed-cell {
+      position: sticky !important;
+      left: 0 !important;
+      z-index: 25 !important;
+      box-shadow: 4px 0 6px -1px rgba(0, 0, 0, 0.08);
+    }
+
+    @page {
+      size: A4 portrait;
+      margin: 5mm 7mm;
+    }
+    
+    @media screen {
+      .print-template-only { display: none !important; }
+      .print-stats-only { display: none !important; }
+      .print-calendar-only { display: none !important; }
+    }
+
+    body.printing-daily .print-stats-only, body.printing-daily .print-calendar-only { display: none !important; }
+    body.printing-daily .print-template-only { display: block !important; width: 100% !important; page-break-inside: avoid !important; }
+    
+    body.printing-stats .print-template-only, body.printing-stats .print-calendar-only { display: none !important; }
+    body.printing-stats .print-stats-only { display: block !important; width: 100% !important; }
+
+    body.printing-calendar .print-template-only, body.printing-calendar .print-stats-only { display: none !important; }
+    body.printing-calendar .print-calendar-only { display: block !important; width: 100% !important; font-size: 7pt !important; }
+
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      body {
+        background: white !important;
+        color: black !important;
+        font-size: 7.5pt !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      header, nav, .no-print, button, .toast-container, .scroll-controls, main {
+        display: none !important;
+      }
+      .print-border {
+        border: 1.5px solid #0f172a !important;
+      }
+      .print-table th, .print-table td {
+        border: 1px solid #94a3b8 !important;
+        padding: 2px 3.5px !important;
+      }
+      .print-table th {
+        background-color: #e2e8f0 !important;
+        color: #0f172a !important;
+        font-weight: bold !important;
+      }
+    }
+    
+    @keyframes slideInDown {
+      from { transform: translateY(-100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .toast-anim {
+      animation: slideInDown 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+
+<div id="app" v-cloak class="min-h-screen flex flex-col relative">
+
+  <!-- TOAST NOTIFICHE -->
+  <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full px-3 pointer-events-none toast-container">
+    <div v-for="t in activeToasts" :key="t.id" 
+         class="pointer-events-auto bg-slate-900 text-white rounded-2xl shadow-2xl p-4 border border-slate-700 flex items-start gap-3 toast-anim">
+      <div :class="t.color" class="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0 shadow">
+        <i :class="t.icon" class="text-base"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <h4 class="font-bold text-xs text-white tracking-wide uppercase">{{ t.title }}</h4>
+        <p class="text-xs text-slate-300 mt-0.5 line-clamp-2 leading-relaxed">{{ t.message }}</p>
+      </div>
+      <button @click="removeToast(t.id)" class="text-slate-400 hover:text-white shrink-0 -mr-1 -mt-1 p-1">
+        <i class="fa-solid fa-xmark text-sm"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div v-if="!currentUser" class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-5">
+      <div class="text-center space-y-2">
+        <div class="bg-blue-600 text-white w-14 h-14 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow">
+          <i class="fa-solid fa-building-shield"></i>
+        </div>
+        <h2 class="text-lg font-bold text-slate-900 tracking-tight">Comando Polizia Locale</h2>
+        <p class="text-xs text-slate-500">Accesso Personale & Gestione Turni</p>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Seleziona il tuo Nominativo</label>
+          <select v-model="loginOpId" class="w-full border rounded-xl p-2.5 bg-slate-50 font-bold focus:bg-white focus:outline-blue-500">
+            <option disabled value="">-- Scegli Operatore --</option>
+            <option v-for="op in safeOperators" :key="op.id" :value="op.id">
+              {{ op.cognome || 'N/D' }} ({{ op.qualifica || '' }})
+            </option>
+          </select>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">PIN Personale (Default: 1234)</label>
+          <input type="password" v-model="loginPin" @keyup.enter="performLogin" placeholder="Inserisci PIN"
+                 class="w-full text-center text-lg tracking-widest font-mono border rounded-xl p-2 focus:outline-blue-500">
+          <p v-if="loginError" class="text-rose-600 text-[11px] font-semibold mt-1 text-center">PIN errato o non valido.</p>
+        </div>
+
+        <button @click="performLogin" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl shadow transition text-sm flex items-center justify-center gap-2">
+          <i class="fa-solid fa-right-to-bracket"></i> Accedi
+        </button>
+      </div>
+
+      <div class="text-[11px] text-slate-400 text-center border-t pt-3">
+        Stato Cloud: <span :class="cloudConnected ? 'text-emerald-600 font-bold' : 'text-amber-600 font-bold'">{{ cloudStatusText }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- HEADER -->
+  <header v-if="currentUser" class="bg-slate-900 text-white shadow-lg sticky top-0 z-40 no-print">
+    <div class="max-w-7xl mx-auto px-3 md:px-4 py-2 flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+      
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="bg-blue-600 p-2 rounded-lg text-white shadow">
+            <i class="fa-solid fa-building-shield text-sm md:text-base"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-1.5">
+              <h1 class="text-sm font-bold tracking-tight">{{ currentUser.cognome || '' }}</h1>
+              <span :class="['BORSANI', 'MOLINO'].includes((currentUser.cognome || '').toUpperCase()) ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-700 text-slate-200'" class="text-[9px] px-1.5 py-0.2 rounded uppercase">
+                {{ ['BORSANI', 'MOLINO'].includes((currentUser.cognome || '').toUpperCase()) ? 'Ufficiale (Approvatore)' : 'Operatore' }}
+              </span>
+            </div>
+            <p class="text-[10px] text-slate-400">{{ currentUser.qualifica || '' }} - Matr. {{ currentUser.matricola || '' }}</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1 md:hidden">
+          <button @click="openChangePinModal" class="bg-slate-800 p-2 rounded-lg text-slate-300 text-xs" title="Modifica PIN">
+            <i class="fa-solid fa-key"></i>
+          </button>
+          <button @click="logout" class="bg-rose-700 p-2 rounded-lg text-white text-xs" title="Disconnetti">
+            <i class="fa-solid fa-right-from-bracket"></i>
+          </button>
+        </div>
+      </div>
+
+      <nav class="flex items-center space-x-1 bg-slate-800/90 p-1 rounded-xl text-xs overflow-x-auto custom-scroll w-full md:w-auto">
+        <button @click="currentTab = 'calendario'" 
+                :class="currentTab === 'calendario' ? 'bg-blue-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0">
+          <i class="fa-solid fa-calendar-days"></i> Calendario
+        </button>
+        <button @click="currentTab = 'giorno'" 
+                :class="currentTab === 'giorno' ? 'bg-blue-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0">
+          <i class="fa-solid fa-clipboard-list"></i> OdG
+        </button>
+        <button @click="currentTab = 'cambi'" 
+                :class="currentTab === 'cambi' ? 'bg-blue-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0 relative">
+          <i class="fa-solid fa-repeat"></i> Cambi
+          <span v-if="pendingSwapsCount > 0" class="bg-amber-500 text-slate-900 text-[10px] px-1.5 rounded-full font-bold">
+            {{ pendingSwapsCount }}
+          </span>
+        </button>
+        <button @click="currentTab = 'assenze'" 
+                :class="currentTab === 'assenze' ? 'bg-blue-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0 relative">
+          <i class="fa-solid fa-user-clock"></i> Assenze
+          <span v-if="pendingAbsencesCount > 0" class="bg-indigo-400 text-slate-900 text-[10px] px-1.5 rounded-full font-bold">
+            {{ pendingAbsencesCount }}
+          </span>
+        </button>
+        <button @click="currentTab = 'messaggi'" 
+                :class="currentTab === 'messaggi' ? 'bg-blue-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0 relative">
+          <i class="fa-solid fa-envelope"></i> Messaggi
+          <span v-if="unreadMessagesCount > 0" class="bg-rose-500 text-white text-[10px] px-1.5 rounded-full font-bold animate-pulse">
+            {{ unreadMessagesCount }}
+          </span>
+        </button>
+        <button @click="currentTab = 'statistiche'" 
+                :class="currentTab === 'statistiche' ? 'bg-emerald-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0">
+          <i class="fa-solid fa-chart-pie"></i> Statistiche
+        </button>
+        <button v-if="currentUser.ruolo === 'admin'" @click="currentTab = 'impostazioni'" 
+                :class="currentTab === 'impostazioni' ? 'bg-indigo-600 text-white font-bold shadow' : 'text-slate-300 hover:text-white'"
+                class="px-2.5 py-1.5 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 shrink-0">
+          <i class="fa-solid fa-sliders"></i> Impostazioni
+        </button>
+      </nav>
+
+      <div class="hidden md:flex items-center gap-1.5">
+        <button v-if="currentUser.ruolo === 'admin'" @click="openModal('generateMonth')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition shadow flex items-center gap-1">
+          <i class="fa-solid fa-calendar-plus"></i> Genera Mese
+        </button>
+        <button @click="openModal('swap')" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition shadow flex items-center gap-1">
+          <i class="fa-solid fa-plus"></i> Cambio
+        </button>
+        <button @click="openModal('absence')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition shadow flex items-center gap-1">
+          <i class="fa-solid fa-user-minus"></i> Assenza
+        </button>
+        <button @click="openModal('message')" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg transition shadow flex items-center gap-1">
+          <i class="fa-solid fa-paper-plane"></i> Messaggio
+        </button>
+        <button @click="openChangePinModal" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-2 py-1.5 rounded-lg transition" title="Modifica PIN">
+          <i class="fa-solid fa-key"></i>
+        </button>
+        <button @click="logout" class="bg-rose-700 hover:bg-rose-600 text-white text-xs px-2.5 py-1.5 rounded-lg transition" title="Disconnetti">
+          <i class="fa-solid fa-right-from-bracket"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- CONTENUTO PRINCIPALE -->
+  <main v-if="currentUser" class="max-w-7xl mx-auto px-3 md:px-4 py-4 flex-1 w-full space-y-4">
+
+    <!-- TAB 1: CALENDARIO -->
+    <section v-if="currentTab === 'calendario'" class="space-y-3">
+      <div class="bg-white p-3.5 rounded-xl shadow-xs border border-slate-200 flex flex-wrap justify-between items-center gap-3">
+        <div class="flex items-center gap-3">
+          <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-table-cells text-blue-600"></i> Turnazione Personale
+          </h2>
+          <div class="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
+            <span class="text-slate-500 font-semibold pl-1">Mese:</span>
+            <select v-model="selectedMonthFilter" @change="onMonthFilterChange" class="bg-white border rounded px-2 py-0.5 font-bold text-slate-800">
+              <option v-for="m in availableMonths" :key="m.key" :value="m.key">{{ m.label }} ({{ m.daysCount }} gg)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 text-[11px]">
+          <span v-for="st in shiftTypes" :key="st.code" :class="st.colorClass" class="px-2 py-0.5 rounded border">
+            {{ st.code }} {{ st.name }}
+          </span>
+          <span class="px-2 py-0.5 rounded font-bold bg-rose-500 text-white">Festivo / Dom</span>
+          <input type="text" v-model="searchFilter" placeholder="Cerca cognome..." class="text-xs border rounded-lg px-2.5 py-1 bg-slate-50 focus:bg-white ml-2">
+          <button @click="printCalendarSheet" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow flex items-center gap-1.5 ml-2">
+            <i class="fa-solid fa-print text-amber-400"></i> Stampa Mese
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden flex flex-col">
+        <div class="bg-slate-50 border-b border-slate-200 p-2.5 flex flex-wrap items-center justify-between gap-3 text-xs scroll-controls">
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-slate-700 flex items-center gap-1.5">
+              <i class="fa-solid fa-arrows-left-right text-blue-600"></i> Sposta Visuale:
+            </span>
+            <button @click="scrollDays(-280)" class="bg-white hover:bg-slate-100 text-slate-800 font-bold px-3 py-1.5 rounded-lg border shadow-xs transition flex items-center gap-1 active:bg-slate-200 select-none">
+              <i class="fa-solid fa-chevron-left text-blue-600"></i> Indietro (-5 gg)
+            </button>
+            <button @click="scrollDays(280)" class="bg-white hover:bg-slate-100 text-slate-800 font-bold px-3 py-1.5 rounded-lg border shadow-xs transition flex items-center gap-1 active:bg-slate-200 select-none">
+              Avanti (+5 gg) <i class="fa-solid fa-chevron-right text-blue-600"></i>
+            </button>
+            <button @click="scrollToToday" class="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-3.5 py-1.5 rounded-lg border border-blue-200 shadow-xs transition flex items-center gap-1.5 active:bg-blue-200 select-none">
+              <i class="fa-solid fa-calendar-day"></i> Vai a Oggi
+            </button>
+          </div>
+          <span class="text-[11px] text-slate-500 italic hidden md:inline">
+            La colonna nominativi a sinistra rimane fissa durante lo scorrimento
+          </span>
+        </div>
+
+        <div ref="tableScroll" class="overflow-x-auto custom-scroll max-h-[75vh] overflow-y-auto">
+          <table class="w-full text-xs text-left border-separate border-spacing-0">
+            <thead class="bg-slate-50 text-slate-600 uppercase font-bold sticky top-0 z-30 shadow-xs">
+              <tr>
+                <th class="py-2.5 px-3 min-w-[170px] w-44 col-fixed-header border-b border-r-2 border-slate-300">
+                  <div class="flex items-center justify-between">
+                    <span>Operatore</span>
+                    <i class="fa-solid fa-thumbtack text-[10px] text-slate-400"></i>
+                  </div>
+                </th>
+                <th v-for="d in visibleDays" :key="d.fullDate" :id="'col_' + d.fullDate" class="py-2 px-1 text-center min-w-[56px] border-b border-r border-slate-200 transition"
+                    :class="{
+                      'bg-rose-500 text-white font-black': d.isRed,
+                      'bg-amber-100 text-amber-950': !d.isRed && d.isSaturday,
+                      'bg-slate-50 text-slate-700': !d.isRed && !d.isSaturday
+                    }">
+                  <div class="font-bold">{{ d.label }}</div>
+                  <div class="text-[10px] opacity-90 font-normal">{{ d.dateShort }}</div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="op in filteredOperators" :key="op.id" 
+                  :class="op.id === currentUser.id ? 'bg-blue-100/60 font-bold' : 'hover:bg-slate-50/90'">
+                
+                <td class="py-2 px-3 col-fixed-cell border-b border-r-2 border-slate-300 transition-colors"
+                    :class="op.id === currentUser.id ? '!bg-blue-100' : '!bg-white'">
+                  <div class="w-36 min-w-[144px]">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold block truncate" :class="op.id === currentUser.id ? 'text-blue-800' : 'text-slate-900'">
+                        {{ op.cognome || 'N/D' }}
+                      </span>
+                      <span class="text-[10px] font-mono text-slate-400 shrink-0">#{{ op.matricola || '' }}</span>
+                    </div>
+                    <span class="text-[10px] text-slate-500 block truncate font-normal">{{ op.qualifica || '' }}</span>
+                  </div>
+                </td>
+
+                <td v-for="d in visibleDays" :key="d.fullDate" class="py-1 px-1 text-center border-b border-r border-slate-100"
+                    :class="d.isRed ? 'bg-rose-50/40' : (d.isSaturday ? 'bg-amber-50/20' : '')">
+                  <div :class="[getShiftStyle(getShift(op.id, d.fullDate)), 'cursor-pointer hover:opacity-85 text-xs py-1.5 rounded font-bold transition shadow-xs relative select-none']"
+                       @click="openTaskDetail(op, d)"
+                       :title="getTaskTooltip(op.id, d.fullDate)">
+                    {{ getShift(op.id, d.fullDate) }}
+                    <span v-if="hasTaskOrVehicle(op.id, d.fullDate)" class="w-1.5 h-1.5 bg-blue-600 rounded-full absolute top-1 right-1"></span>
+                  </div>
+                </td>
+
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: ORDINE DEL GIORNO -->
+    <section v-if="currentTab === 'giorno'" class="space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 flex flex-wrap justify-between items-center gap-3 no-print">
+        <div class="flex items-center gap-3">
+          <label class="text-xs font-bold text-slate-700">Seleziona Giorno:</label>
+          <select v-model="selectedDate" class="text-xs border-2 border-blue-500 rounded-lg p-2 font-bold bg-white text-slate-900">
+            <option v-for="d in days" :key="d.fullDate" :value="d.fullDate" :class="d.isRed ? 'text-rose-600 font-bold' : ''">
+              {{ d.label }} - {{ d.dateShort }}/{{ d.year }} {{ d.isHoliday ? '★ FESTIVO' : (d.isSunday ? '(Dom)' : '') }}
+            </option>
+          </select>
+        </div>
+        <button @click="printDailySheet" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow flex items-center gap-2">
+          <i class="fa-solid fa-print text-amber-400 text-sm"></i> Stampa Foglio Giornaliero (A4 Ufficiale)
+        </button>
+      </div>
+
+      <!-- Schede Mobile -->
+      <div class="block md:hidden space-y-3">
+        <div v-for="op in sortedDayOperators" :key="'mob_' + op.id" 
+             :class="isOperatorOffDuty(op) ? 'bg-slate-50 opacity-75' : 'bg-white'"
+             class="rounded-xl p-3.5 border border-slate-200 shadow-xs space-y-2.5">
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-bold text-slate-900 block">{{ op.cognome || 'N/D' }}</span>
+                <span v-if="getRoleRank(op) === 1" class="bg-amber-500 text-slate-950 text-[9px] px-1.5 py-0.2 rounded font-black uppercase">Responsabile</span>
+                <span v-else-if="getRoleRank(op) === 3" class="bg-teal-100 text-teal-800 text-[9px] px-1.5 py-0.2 rounded font-bold uppercase">Ufficio</span>
+              </div>
+              <span class="text-[11px] text-slate-500 font-medium">{{ op.qualifica || '' }} - Matr. {{ op.matricola || '' }}</span>
+            </div>
+            <span :class="getShiftStyle(getShift(op.id, selectedDate))" class="px-2.5 py-1 rounded-lg font-black text-xs border shadow-xs">
+              {{ getShift(op.id, selectedDate) }}
+            </span>
+          </div>
+
+          <div v-if="!isOperatorOffDuty(op)" class="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100 text-xs">
+            <span class="text-slate-500 font-bold text-[11px] flex items-center gap-1">
+              <i class="fa-solid fa-car text-blue-600"></i> Veicolo:
+            </span>
+            <span v-if="getVehicle(op.id, selectedDate)" class="bg-slate-800 text-white px-2 py-0.5 rounded font-mono font-bold text-xs truncate">
+              {{ getVehicle(op.id, selectedDate) }}
+            </span>
+            <span v-else class="text-slate-400 italic">Nessun veicolo assegnato</span>
+          </div>
+
+          <div @click="openTaskDetail(op, getDayObj(selectedDate))" 
+               class="bg-blue-50/60 hover:bg-blue-100/60 border border-blue-200 p-2.5 rounded-xl cursor-pointer transition flex items-center justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <span class="text-[10px] uppercase font-bold text-blue-800 block flex items-center gap-1">
+                <i class="fa-solid fa-clipboard-list"></i> Servizio / Mansione:
+              </span>
+              <p class="text-xs text-slate-800 font-medium truncate mt-0.5">
+                {{ getTask(op.id, selectedDate) || 'Nessuna mansione specificata (Tocca per leggere/modificare)' }}
+              </p>
+            </div>
+            <div class="bg-white text-blue-600 px-2 py-1 rounded-lg text-xs font-bold shrink-0 border border-blue-200 shadow-xs flex items-center gap-1">
+              <span>Apri</span>
+              <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabella Desktop -->
+      <div class="hidden md:block bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto custom-scroll">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead class="bg-slate-900 text-white uppercase font-bold border-b border-slate-200">
+              <tr>
+                <th class="py-2.5 px-3 w-40">Qualifica</th>
+                <th class="py-2.5 px-3 w-44">Personale</th>
+                <th class="py-2.5 px-2 text-center w-20">Turno</th>
+                <th class="py-2.5 px-3 min-w-[150px] w-40 whitespace-nowrap">Veicolo</th>
+                <th class="py-2.5 px-4">Servizio da Eseguire (Clicca per leggere/modificare)</th>
+                <th v-if="currentUser.ruolo === 'admin'" class="py-2.5 px-3 text-right w-24 no-print">Azioni</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              <tr v-for="op in sortedDayOperators" :key="op.id" 
+                  :class="isOperatorOffDuty(op) ? 'bg-slate-50/70 text-slate-500' : (getRoleRank(op) === 1 ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50')" 
+                  class="transition">
+                <td class="py-2.5 px-3 font-semibold">
+                  <div class="flex items-center gap-1.5">
+                    <span>{{ op.qualifica || '' }}</span>
+                    <span v-if="getRoleRank(op) === 1" class="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.2 rounded uppercase">Resp.</span>
+                  </div>
+                </td>
+                <td class="py-2.5 px-3 font-bold text-slate-900">{{ op.cognome || '' }}</td>
+                <td class="py-2.5 px-2 text-center">
+                  <span :class="getShiftStyle(getShift(op.id, selectedDate))" class="px-2.5 py-0.5 rounded font-bold border">
+                    {{ getShift(op.id, selectedDate) }}
+                  </span>
+                </td>
+                <td class="py-2.5 px-3 whitespace-nowrap min-w-[150px]">
+                  <span v-if="getVehicle(op.id, selectedDate)" class="bg-slate-800 text-white px-2.5 py-1 rounded-md text-[11px] font-mono font-bold shadow-xs inline-block">
+                    {{ getVehicle(op.id, selectedDate) }}
+                  </span>
+                  <span v-else class="text-slate-300 font-bold">-</span>
+                </td>
+                <td class="py-2 px-3">
+                  <div @click="openTaskDetail(op, getDayObj(selectedDate))" 
+                       class="cursor-pointer bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 p-2 rounded-lg transition flex items-center justify-between group">
+                    <span class="font-medium text-slate-800 truncate pr-2">
+                      {{ getTask(op.id, selectedDate) || (isOperatorOffDuty(op) ? 'Assente dal servizio' : 'Nessuna mansione assegnata') }}
+                    </span>
+                    <span class="text-[10px] font-bold text-slate-400 group-hover:text-blue-600 flex items-center gap-1 shrink-0">
+                      <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Espandi
+                    </span>
+                  </div>
+                </td>
+                <td v-if="currentUser.ruolo === 'admin'" class="py-2.5 px-3 text-right no-print">
+                  <button @click="openTaskDetail(op, getDayObj(selectedDate))" class="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded text-xs font-bold transition shadow">
+                    <i class="fa-solid fa-pen-to-square mr-1"></i> Modifica
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: CAMBI TURNO -->
+    <section v-if="currentTab === 'cambi'" class="space-y-4">
+      <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-xs border border-slate-200">
+        <div>
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-repeat text-amber-500"></i> Registro Scambi di Turno
+          </h2>
+          <p class="text-xs text-slate-500">Istanze inoltrate a <strong>MOLINO</strong> e <strong>BORSANI</strong> per autorizzazione.</p>
+        </div>
+        <button @click="openModal('swap')" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow flex items-center gap-1">
+          <i class="fa-solid fa-plus"></i> Nuovo Cambio
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div v-for="swap in shiftSwaps" :key="swap.id" class="bg-white rounded-xl shadow-xs border border-slate-200 p-4 flex flex-col justify-between space-y-3">
+          <div>
+            <div class="flex justify-between items-start mb-2">
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded uppercase"
+                    :class="swap.stato === 'In Attesa' ? 'bg-amber-100 text-amber-800 border border-amber-300' : (swap.stato === 'Approvato' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800')">
+                {{ swap.stato }}
+              </span>
+              <span class="text-[10px] text-slate-400 font-mono">ID #{{ swap.id }}</span>
+            </div>
+
+            <div class="bg-slate-50 rounded-lg p-3 space-y-2 border border-slate-100 text-xs">
+              <div class="flex justify-between items-center">
+                <span class="font-bold text-slate-800">{{ getOpName(swap.richiedente_id) }}</span>
+                <span class="font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">{{ swap.richiedente_data }} ({{ swap.richiedente_turno }})</span>
+              </div>
+              <div class="text-center text-slate-400 font-bold text-[10px]">
+                <i class="fa-solid fa-arrow-down-up text-amber-500"></i> SCAMBIA CON
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="font-bold text-slate-800">{{ getOpName(swap.target_id) }}</span>
+                <span class="font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">{{ swap.target_data }} ({{ swap.target_turno }})</span>
+              </div>
+            </div>
+
+            <p class="text-xs text-slate-600 mt-2 italic bg-slate-50 p-2 rounded">
+              "{{ swap.motivo || 'Nessuna nota specificata' }}"
+            </p>
+          </div>
+
+          <div v-if="currentUser.ruolo === 'admin' && swap.stato === 'In Attesa'" class="pt-2 border-t border-slate-100 flex items-center justify-end gap-2 text-xs">
+            <button @click="approveSwap(swap)" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded transition">
+              Approva & Scambia
+            </button>
+            <button @click="rejectSwap(swap)" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded transition">
+              Respingi
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-if="shiftSwaps.length === 0" class="text-center py-10 text-slate-400 text-xs">
+        Nessun cambio turno presente.
+      </div>
+    </section>
+
+    <!-- TAB 4: ASSENZE -->
+    <section v-if="currentTab === 'assenze'" class="space-y-4">
+      <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-xs border border-slate-200">
+        <div>
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-user-clock text-indigo-600"></i> Registro Ferie & Permessi
+          </h2>
+          <p class="text-xs text-slate-500">Istanze inoltrate a <strong>MOLINO</strong> e <strong>BORSANI</strong> for Ferie, Permessi, Legge 104 e Malattia.</p>
+        </div>
+        <button @click="openModal('absence')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow flex items-center gap-1">
+          <i class="fa-solid fa-plus"></i> Nuova Richiesta
+        </button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead class="bg-slate-50 text-slate-600 uppercase font-bold border-b border-slate-200">
+            <tr>
+              <th class="py-3 px-4">Operatore</th>
+              <th class="py-3 px-3">Causale</th>
+              <th class="py-3 px-3">Data / Periodo</th>
+              <th class="py-3 px-3">Fascia Oraria / Note</th>
+              <th class="py-3 px-3">Stato</th>
+              <th v-if="currentUser.ruolo === 'admin'" class="py-3 px-3 text-right">Decisione</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-for="item in absenceRequests" :key="item.id" class="hover:bg-slate-50">
+              <td class="py-3 px-4 font-bold text-slate-800">{{ getOpName(item.operatore_id) }}</td>
+              <td class="py-3 px-3 font-semibold">
+                <span :class="item.tipo === 'RO' ? 'bg-orange-100 text-orange-900 border border-orange-300' : (item.tipo === 'P' ? 'bg-teal-100 text-teal-900 border border-teal-300' : 'bg-slate-100 text-slate-800')" class="px-2 py-0.5 rounded text-[11px] font-bold">
+                  {{ item.tipo }}
+                </span>
+              </td>
+              <td class="py-3 px-3 text-slate-700 font-medium">
+                <span v-if="item.data_inizio === item.data_fine">Il {{ item.data_inizio }}</span>
+                <span v-else>Dal {{ item.data_inizio }} al {{ item.data_fine }}</span>
+              </td>
+              <td class="py-3 px-3 text-slate-700">
+                <div v-if="item.note && item.note.includes('[Fascia:')" class="space-y-0.5">
+                  <span class="inline-flex items-center gap-1 bg-orange-50 text-orange-800 border border-orange-200 px-2 py-0.5 rounded text-[11px] font-bold">
+                    <i class="fa-regular fa-clock"></i> {{ extractFascia(item.note) }}
+                  </span>
+                  <p v-if="extractCleanNote(item.note)" class="text-[11px] text-slate-500 italic">
+                    {{ extractCleanNote(item.note) }}
+                  </p>
+                </div>
+                <div v-else class="italic text-slate-500">
+                  {{ item.note || '-' }}
+                </div>
+              </td>
+              <td class="py-3 px-3">
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded uppercase"
+                      :class="item.stato === 'Approvato' ? 'bg-emerald-100 text-emerald-800' : (item.stato === 'In Attesa' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800')">
+                  {{ item.stato }}
+                </span>
+              </td>
+              <td v-if="currentUser.ruolo === 'admin'" class="py-3 px-3 text-right space-x-2">
+                <button v-if="item.stato === 'In Attesa'" @click="approveAbsence(item)" class="text-emerald-600 hover:text-emerald-800 font-bold">
+                  Approva
+                </button>
+                <button v-if="item.stato === 'In Attesa'" @click="rejectAbsence(item)" class="text-rose-600 hover:text-rose-800 font-bold">
+                  Respingi
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 5: MESSAGGISTICA -->
+    <section v-if="currentTab === 'messaggi'" class="space-y-4">
+      <div class="flex flex-wrap justify-between items-center bg-white p-4 rounded-xl shadow-xs border border-slate-200 gap-3">
+        <div>
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-envelope-open-text text-blue-600"></i> Bacheca Messaggi & Documenti Condivisi
+          </h2>
+          <p class="text-xs text-slate-500">Invia comunicazioni di servizio o file a singoli, più colleghi selezionati o a tutti.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="bg-slate-100 p-1 rounded-lg flex text-xs">
+            <button @click="messageFilter = 'ricevuti'" 
+                    :class="messageFilter === 'ricevuti' ? 'bg-white font-bold shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'"
+                    class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+              <i class="fa-solid fa-inbox"></i> Ricevuti ({{ receivedMessages.length }})
+            </button>
+            <button @click="messageFilter = 'inviati'" 
+                    :class="messageFilter === 'inviati' ? 'bg-white font-bold shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'"
+                    class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+              <i class="fa-solid fa-paper-plane"></i> Inviati ({{ sentMessages.length }})
+            </button>
+          </div>
+          <button @click="openModal('message')" class="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-lg shadow transition flex items-center gap-1.5">
+            <i class="fa-solid fa-pen-to-square"></i> Nuovo Messaggio
+          </button>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div v-for="msg in currentMessageList" :key="msg.id" 
+             :class="(!msg.letto && messageFilter === 'ricevuti') ? 'border-l-4 border-l-blue-600 bg-blue-50/40' : 'bg-white'"
+             class="rounded-xl shadow-xs border border-slate-200 p-4 transition space-y-2.5">
+          <div class="flex flex-wrap justify-between items-start gap-2">
+            <div class="flex items-center gap-2">
+              <div :class="msg.mittente_id === currentUser.id ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'" class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shadow-xs">
+                <i :class="msg.mittente_id === currentUser.id ? 'fa-solid fa-arrow-up' : 'fa-solid fa-arrow-down'"></i>
+              </div>
+              <div>
+                <span class="text-xs font-bold text-slate-900">
+                  {{ messageFilter === 'ricevuti' ? 'Da: ' + getOpName(msg.mittente_id) : 'A: ' + getOpName(msg.destinatario_id) }}
+                </span>
+                <span class="text-[10px] text-slate-400 block">{{ formatTimestamp(msg.creato_il) }}</span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span v-if="messageFilter === 'ricevuti'" :class="msg.letto ? 'text-slate-400' : 'bg-blue-600 text-white font-bold animate-pulse'" class="text-[10px] px-2 py-0.5 rounded-full">
+                {{ msg.letto ? 'Letto' : 'NUOVO NON LETTO' }}
+              </span>
+              <button v-if="messageFilter === 'ricevuti' && !msg.letto" @click="markAsRead(msg)" class="text-xs text-blue-600 hover:text-blue-800 font-bold">
+                <i class="fa-solid fa-check-double"></i> Segna letto
+              </button>
+              <button @click="deleteMessage(msg)" class="text-slate-400 hover:text-rose-600 text-xs">
+                <i class="fa-solid fa-trash-can"></i>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <h4 class="font-bold text-slate-800 text-sm mb-1">{{ msg.titolo }}</h4>
+            <p class="text-xs text-slate-600 whitespace-pre-wrap leading-relaxed">{{ msg.testo }}</p>
+          </div>
+
+          <div v-if="msg.allegato_dati" class="pt-2 border-t border-slate-100">
+            <a :href="msg.allegato_dati" :download="msg.allegato_nome" target="_blank" 
+               class="inline-flex items-center gap-2 bg-slate-100 hover:bg-blue-50 text-slate-800 hover:text-blue-700 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold transition shadow-xs">
+              <i class="fa-solid fa-paperclip text-blue-600"></i>
+              <span>{{ msg.allegato_nome }}</span>
+              <span class="text-[10px] bg-white px-1.5 py-0.5 rounded border text-slate-500"><i class="fa-solid fa-download mr-1"></i>Scarica / Apri</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: STATISTICHE -->
+    <section v-if="currentTab === 'statistiche'" class="space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-200 flex flex-wrap justify-between items-center gap-3 no-print">
+        <div>
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-chart-pie text-emerald-600"></i> Statistiche Personale & Servizi
+          </h2>
+          <p class="text-xs text-slate-500">Riepilogo presenze, assenze e conteggio analitico mansioni svolte.</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-lg border text-xs">
+            <span class="font-bold text-slate-600 pl-1">Periodo:</span>
+            <select v-model="statsMonthFilter" class="bg-white border rounded px-2.5 py-1 font-bold text-slate-800">
+              <option value="ALL">Tutto l'archivio</option>
+              <option v-for="m in availableMonths" :key="'st_' + m.key" :value="m.key">{{ m.label }}</option>
+            </select>
+          </div>
+          <button @click="printStatsSheet" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow flex items-center gap-1.5">
+            <i class="fa-solid fa-print"></i> Stampa Statistiche
+          </button>
+        </div>
+      </div>
+
+      <!-- RIQUADRI IN PRIMO PIANO: SERVIZI SPECIFICI -->
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-2.5">
+        <div class="bg-white p-3 rounded-xl border border-blue-200 shadow-xs text-center bg-blue-50/30">
+          <span class="text-[10px] font-bold text-blue-800 uppercase tracking-wide block truncate">Pattuglia ZTL</span>
+          <div class="text-xl font-black text-blue-700 mt-1">{{ countSpecificTask('ZTL') }}</div>
+          <span class="text-[10px] text-slate-500">Servizi svolti</span>
+        </div>
+        <div class="bg-white p-3 rounded-xl border border-emerald-200 shadow-xs text-center bg-emerald-50/30">
+          <span class="text-[10px] font-bold text-emerald-800 uppercase tracking-wide block truncate">Sinistri</span>
+          <div class="text-xl font-black text-emerald-700 mt-1">{{ countSpecificTask('Sinistri') }}</div>
+          <span class="text-[10px] text-slate-500">Rilievi / Pattuglie</span>
+        </div>
+        <div class="bg-white p-3 rounded-xl border border-amber-200 shadow-xs text-center bg-amber-50/30">
+          <span class="text-[10px] font-bold text-amber-800 uppercase tracking-wide block truncate">Controllo Soste</span>
+          <div class="text-xl font-black text-amber-700 mt-1">{{ countSpecificTask('Sosta') }}</div>
+          <span class="text-[10px] text-slate-500">Verifiche area</span>
+        </div>
+        <div class="bg-white p-3 rounded-xl border border-purple-200 shadow-xs text-center bg-purple-50/30">
+          <span class="text-[10px] font-bold text-purple-800 uppercase tracking-wide block truncate">Controllo Parchi</span>
+          <div class="text-xl font-black text-purple-700 mt-1">{{ countSpecificTask('Parco') + countSpecificTask('Parchi') }}</div>
+          <span class="text-[10px] text-slate-500">Presidii verdi</span>
+        </div>
+        <div class="bg-white p-3 rounded-xl border border-rose-200 shadow-xs text-center bg-rose-50/30">
+          <span class="text-[10px] font-bold text-rose-800 uppercase tracking-wide block truncate">Monopattini</span>
+          <div class="text-xl font-black text-rose-700 mt-1">{{ countSpecificTask('Monopattini') }}</div>
+          <span class="text-[10px] text-slate-500">Controlli specifici</span>
+        </div>
+        <div class="bg-white p-3 rounded-xl border border-indigo-200 shadow-xs text-center bg-indigo-50/30">
+          <span class="text-[10px] font-bold text-indigo-800 uppercase tracking-wide block truncate">Posto Controllo</span>
+          <div class="text-xl font-black text-indigo-700 mt-1">{{ countSpecificTask('Posto Controllo') }}</div>
+          <span class="text-[10px] text-slate-500">Posti di blocco</span>
+        </div>
+      </div>
+
+      <!-- INTERROGAZIONE A SINGOLO OPERATORE -->
+      <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+          <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-id-card text-blue-600"></i> Interrogazione Dettaglio Singolo Operatore
+          </h3>
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-semibold text-slate-600">Seleziona Operatore:</label>
+            <select v-model.number="selectedInterrogationOpId" class="text-xs border rounded-lg p-2 font-bold bg-slate-50 text-slate-900">
+              <option value="">-- Scegli Operatore per interrogazione --</option>
+              <option v-for="op in safeOperators" :key="'int_' + op.id" :value="op.id">
+                {{ op.cognome }} ({{ op.qualifica }})
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="interrogatedOperatorStats" class="space-y-3">
+          <div class="grid grid-cols-2 md:grid-cols-6 gap-2 text-center text-xs">
+            <div class="p-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+              <span class="text-slate-500 text-[10px] uppercase font-bold block">Giorni Servizio</span>
+              <span class="text-base font-black text-blue-700">{{ interrogatedOperatorStats.workDays }}</span>
+            </div>
+            <div class="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <span class="text-slate-500 text-[10px] uppercase font-bold block">Riposi (R)</span>
+              <span class="text-base font-black text-slate-700">{{ interrogatedOperatorStats.restDays }}</span>
+            </div>
+            <div class="p-2.5 bg-purple-50 border border-purple-200 rounded-xl">
+              <span class="text-slate-500 text-[10px] uppercase font-bold block">Ferie (F)</span>
+              <span class="text-base font-black text-purple-700">{{ interrogatedOperatorStats.ferieDays }}</span>
+            </div>
+            <div class="p-2.5 bg-orange-50 border border-orange-200 rounded-xl">
+              <span class="text-slate-500 text-[10px] uppercase font-bold block">Recupero Ore (RO)</span>
+              <span class="text-base font-black text-orange-700">{{ interrogatedOperatorStats.roDays }}</span>
+            </div>
+            <div class="p-2.5 bg-teal-50 border border-teal-200 rounded-xl">
+              <span class="text-slate-500 text-[10px] uppercase font-bold block">Permessi (P)</span>
+              <span class="text-base font-black text-teal-700">{{ interrogatedOperatorStats.permessoDays }}</span>
+            </div>
+            <div class="p-2.5 bg-rose-50 border border-rose-200 rounded-xl">
+              <span class="text-slate-500 text-[10px] uppercase font-bold block">Malattia (M)</span>
+              <span class="text-base font-black text-rose-700">{{ interrogatedOperatorStats.malattiaDays }}</span>
+            </div>
+          </div>
+
+          <div>
+            <h4 class="font-bold text-slate-800 text-xs mb-1.5">Riepilogo Servizi Operativi e Mansioni Svolte dall'Operatore:</h4>
+            <div class="flex flex-wrap gap-1.5">
+              <span v-for="(count, taskName) in interrogatedOperatorStats.tasksBreakdown" :key="taskName"
+                    class="bg-slate-100 border px-2 py-1 rounded-lg text-xs font-semibold text-slate-800">
+                <strong class="text-blue-600">{{ count }}x</strong> {{ taskName }}
+              </span>
+              <span v-if="Object.keys(interrogatedOperatorStats.tasksBreakdown).length === 0" class="text-slate-400 italic text-xs">Nessun servizio specifico registrato.</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="text-center py-6 text-slate-400 text-xs italic">
+          Seleziona un operatore dal menu in alto a destra per visualizzare il dettaglio di presenze, permessi e servizi.
+        </div>
+      </div>
+
+      <!-- TABELLA GENERALE -->
+      <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto custom-scroll">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead class="bg-slate-900 text-white uppercase font-bold">
+              <tr>
+                <th class="py-2.5 px-3 min-w-[160px]">Operatore</th>
+                <th class="py-2.5 px-2 text-center bg-blue-900/60">Servizio</th>
+                <th class="py-2.5 px-2 text-center">Riposo (R)</th>
+                <th class="py-2.5 px-2 text-center bg-purple-950/40">Ferie (F)</th>
+                <th class="py-2.5 px-2 text-center bg-orange-950/40">Rec. Ore (RO)</th>
+                <th class="py-2.5 px-2 text-center bg-teal-950/40">Permessi (P)</th>
+                <th class="py-2.5 px-2 text-center bg-sky-950/40">104</th>
+                <th class="py-2.5 px-2 text-center bg-rose-950/40">Malattia (M)</th>
+                <th class="py-2.5 px-3 min-w-[220px]">Ripartizione Servizi Operativi Svolti</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-for="op in computedOperatorStats" :key="'stat_' + op.id" 
+                  class="hover:bg-blue-50/50 cursor-pointer transition"
+                  @click="openDetailedStats(op)">
+                <td class="py-2.5 px-3">
+                  <div class="font-bold text-slate-900">{{ op.cognome }}</div>
+                  <div class="text-[10px] text-slate-500">{{ op.qualifica }} - #{{ op.matricola }}</div>
+                </td>
+                <td class="py-2.5 px-2 text-center font-bold text-blue-700 bg-blue-50/40">{{ op.workDays }}</td>
+                <td class="py-2.5 px-2 text-center text-slate-500 font-medium">{{ op.restDays }}</td>
+                <td class="py-2.5 px-2 text-center font-bold text-purple-700 bg-purple-50/40">{{ op.ferieDays }}</td>
+                <td class="py-2.5 px-2 text-center font-bold text-orange-700 bg-orange-50/40">{{ op.roDays }}</td>
+                <td class="py-2.5 px-2 text-center font-bold text-teal-700 bg-teal-50/40">{{ op.permessoDays }}</td>
+                <td class="py-2.5 px-2 text-center font-bold text-sky-700 bg-sky-50/40">{{ op.l104Days }}</td>
+                <td class="py-2.5 px-2 text-center font-bold text-rose-700 bg-rose-50/40">{{ op.malattiaDays }}</td>
+                <td class="py-2.5 px-3">
+                  <div class="flex flex-wrap gap-1 max-w-lg">
+                    <span v-for="(count, taskName) in op.tasksBreakdown" :key="taskName"
+                          class="inline-flex items-center gap-1 bg-slate-100 hover:bg-white text-slate-800 border border-slate-200 px-1.5 py-0.5 rounded text-[10px]">
+                      <span class="font-bold text-blue-700">{{ count }}x</span>
+                      <span>{{ taskName }}</span>
+                    </span>
+                    <span v-if="Object.keys(op.tasksBreakdown).length === 0" class="text-slate-300 italic text-[11px]">-</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 7: IMPOSTAZIONI -->
+    <section v-if="currentTab === 'impostazioni' && currentUser.ruolo === 'admin'" class="space-y-6">
+      <div class="flex flex-wrap gap-2 border-b pb-3">
+        <button @click="settingsSubTab = 'personale'" 
+                :class="settingsSubTab === 'personale' ? 'bg-blue-600 text-white font-bold shadow' : 'bg-white text-slate-700 hover:bg-slate-100'"
+                class="px-4 py-2 rounded-xl text-xs transition flex items-center gap-2">
+          <i class="fa-solid fa-users"></i> Gestione Personale ({{ operators.length }})
+        </button>
+        <button @click="settingsSubTab = 'turni'" 
+                :class="settingsSubTab === 'turni' ? 'bg-blue-600 text-white font-bold shadow' : 'bg-white text-slate-700 hover:bg-slate-100'"
+                class="px-4 py-2 rounded-xl text-xs transition flex items-center gap-2">
+          <i class="fa-solid fa-palette"></i> Codici Turno & Colori
+        </button>
+        <button @click="settingsSubTab = 'preset'" 
+                :class="settingsSubTab === 'preset' ? 'bg-blue-600 text-white font-bold shadow' : 'bg-white text-slate-700 hover:bg-slate-100'"
+                class="px-4 py-2 rounded-xl text-xs transition flex items-center gap-2">
+          <i class="fa-solid fa-list-check"></i> Preset Mansioni & Servizi
+        </button>
+      </div>
+
+      <!-- Ruolino -->
+      <div v-if="settingsSubTab === 'personale'" class="space-y-4">
+        <div class="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200">
+          <div>
+            <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <i class="fa-solid fa-id-badge text-blue-600"></i> Ruolino Personale del Comando
+            </h3>
+            <p class="text-xs text-slate-500">Gestione matricole, qualifiche e ruoli.</p>
+          </div>
+          <button @click="openOperatorModal(null)" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow transition flex items-center gap-1.5">
+            <i class="fa-solid fa-user-plus"></i> Nuovo Operatore
+          </button>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead class="bg-slate-900 text-white uppercase font-bold">
+              <tr>
+                <th class="py-2.5 px-3 w-16">Matr.</th>
+                <th class="py-2.5 px-3">Cognome</th>
+                <th class="py-2.5 px-3">Qualifica</th>
+                <th class="py-2.5 px-3 w-28">Ruolo</th>
+                <th class="py-2.5 px-3 w-24">PIN</th>
+                <th class="py-2.5 px-3 text-right w-32">Azioni</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+              <tr v-for="op in operators" :key="op.id" class="hover:bg-slate-50">
+                <td class="py-2 px-3 font-mono font-bold text-slate-500">#{{ op.matricola }}</td>
+                <td class="py-2 px-3 font-bold text-slate-900">{{ op.cognome }}</td>
+                <td class="py-2 px-3 font-semibold text-slate-600">{{ op.qualifica }}</td>
+                <td class="py-2 px-3">
+                  <span :class="op.ruolo === 'admin' ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-slate-100 text-slate-600'" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase">
+                    {{ op.ruolo === 'admin' ? 'Ufficiale' : 'Operatore' }}
+                  </span>
+                </td>
+                <td class="py-2 px-3 font-mono text-slate-500">••••</td>
+                <td class="py-2 px-3 text-right space-x-2">
+                  <button @click="openOperatorModal(op)" class="text-blue-600 hover:text-blue-800 font-bold">Modifica</button>
+                  <button @click="deleteOperator(op)" class="text-rose-600 hover:text-rose-800 font-bold">Elimina</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Turni -->
+      <div v-if="settingsSubTab === 'turni'" class="space-y-4">
+        <div class="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center">
+          <div>
+            <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <i class="fa-solid fa-palette text-amber-500"></i> Configurazione Codici Turno
+            </h3>
+          </div>
+          <button @click="openNewShiftTypePrompt" class="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow transition">
+            + Aggiungi Nuovo Turno
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div v-for="(st, idx) in shiftTypes" :key="st.code" class="bg-white p-3.5 rounded-xl border border-slate-200 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+              <span :class="st.colorClass" class="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm border shadow-xs">
+                {{ st.code }}
+              </span>
+              <div>
+                <h4 class="font-bold text-slate-800 text-xs">{{ st.name }}</h4>
+                <span class="text-[10px] text-slate-400 font-mono">Codice: {{ st.code }}</span>
+              </div>
+            </div>
+            <button v-if="!['1','2','3','R','F'].includes(st.code)" @click="removeShiftType(idx)" class="text-rose-500 hover:text-rose-700 text-xs font-bold">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preset -->
+      <div v-if="settingsSubTab === 'preset'" class="space-y-4">
+        <div class="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center">
+          <div>
+            <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <i class="fa-solid fa-list-check text-indigo-600"></i> Preset Mansioni
+            </h3>
+          </div>
+          <button @click="addPresetPrompt" class="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow transition">
+            + Nuovo Preset Mansione
+          </button>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl border border-slate-200">
+          <div class="flex flex-wrap gap-2">
+            <div v-for="(preset, pIdx) in taskPresets" :key="preset" class="bg-slate-50 border border-slate-300 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-medium text-slate-800">
+              <span>{{ preset }}</span>
+              <button @click="removePreset(pIdx)" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODELLO STAMPA CALENDARIO MENSILE -->
+  <div class="print-calendar-only bg-white text-slate-950 font-sans p-2">
+    <div class="space-y-3">
+      <div class="text-center border-b pb-2">
+        <h1 class="text-lg font-black uppercase text-slate-900">Comando Polizia Locale Saronno</h1>
+        <p class="text-xs font-bold text-slate-600">Tabellone Turnazione Mese: {{ selectedMonthFilter }}</p>
+      </div>
+      <table class="w-full text-[6pt] border-collapse print-table">
+        <thead>
+          <tr class="bg-slate-200 text-slate-900 font-bold uppercase">
+            <th class="p-1 text-left w-28">Operatore</th>
+            <th v-for="d in visibleDays" :key="'pcal_' + d.fullDate" class="p-0.5 text-center w-5 font-bold"
+                :class="d.isRed ? 'bg-rose-200 text-rose-950' : ''">
+              {{ d.day }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="op in safeOperators" :key="'prow_' + op.id">
+            <td class="p-1 font-bold uppercase truncate max-w-[110px]">{{ op.cognome }}</td>
+            <td v-for="d in visibleDays" :key="'pcell_' + op.id + '_' + d.fullDate" class="p-0.5 text-center font-mono font-bold"
+                :class="d.isRed ? 'bg-rose-50' : ''">
+              {{ getShift(op.id, d.fullDate) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- MODELLO UFFICIALE DI STAMPA A4 (GIORNALIERO / OdG) -->
+  <div class="print-template-only bg-white text-slate-950 font-sans p-1">
+    <div class="print-border p-2.5 flex flex-col justify-between" style="min-height: 284mm;">
+      <div>
+        <div class="flex justify-between items-start text-[8pt] font-semibold text-slate-700 border-b border-slate-400 pb-1 mb-1.5">
+          <span>Mod. 0001 - PL</span>
+          <span class="text-center font-bold">POLIZIA LOCALE SARONNO - Anno {{ currentYearFromSelectedDate }}</span>
+          <span>Allegato n. 1</span>
+        </div>
+
+        <div class="text-center mb-2">
+          <h1 class="text-xl font-black uppercase tracking-tight text-slate-900">Foglio del Servizio Giornaliero</h1>
+          <p class="text-[10pt] font-bold text-slate-700 mt-0.5">
+            Ordine del Giorno - Data: <span class="underline">{{ formattedSelectedDateLong }}</span>
+          </p>
+        </div>
+
+        <div class="mb-2">
+          <div class="bg-slate-800 text-white font-bold text-[8.5pt] uppercase px-2 py-0.5 tracking-wider text-center border border-slate-800">
+            Personale in Servizio
+          </div>
+          <table class="w-full text-[8pt] border-collapse print-table">
+            <thead>
+              <tr class="bg-slate-200 text-slate-900 font-bold uppercase text-[7pt]">
+                <th class="w-28 text-left">Qualifica</th>
+                <th class="w-32 text-left">Cognome</th>
+                <th class="w-20 text-center">Firma</th>
+                <th class="w-14 text-center">Turno</th>
+                <th class="w-28 text-left">Veicolo</th>
+                <th class="text-left">Mansione / Servizio Assegnato</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="op in activeWorkingOperators" :key="'prt_' + op.id"
+                  :class="getRoleRank(op) === 1 ? 'bg-amber-50/50' : ''">
+                <td class="font-medium text-slate-800">
+                  <div class="flex items-center gap-1">
+                    <span>{{ op.qualifica || '' }}</span>
+                    <span v-if="getRoleRank(op) === 1" class="text-[6.5pt] bg-amber-200 text-slate-950 font-bold px-1 rounded">RESP.</span>
+                  </div>
+                </td>
+                <td class="font-bold text-slate-950 uppercase">{{ op.cognome || '' }}</td>
+                <td class="text-center font-mono text-slate-400 border-dashed"></td>
+                <td class="text-center font-black">
+                  <span class="px-1.5 py-0.2 rounded text-[7.5pt] font-mono border"
+                        :class="getShift(op.id, selectedDate) === '1' ? 'bg-sky-200 text-sky-950 border-sky-400' :
+                               (getShift(op.id, selectedDate) === '2' ? 'bg-emerald-200 text-emerald-950 border-emerald-400' :
+                               (getShift(op.id, selectedDate) === '3' ? 'bg-amber-200 text-amber-950 border-amber-400' :
+                               (getShift(op.id, selectedDate) === 'SE' ? 'bg-purple-900 text-white border-purple-950' :
+                               (getShift(op.id, selectedDate) === 'G' ? 'bg-orange-300 text-orange-950 border-orange-500' : 
+                               (getShift(op.id, selectedDate) === 'J' ? 'bg-pink-200 text-pink-950 border-pink-400' :
+                               (getShift(op.id, selectedDate) === 'M' ? 'bg-rose-300 text-rose-950 border-rose-500' : 'bg-slate-100 text-slate-900'))))))">
+                    {{ getShift(op.id, selectedDate) }}
+                  </span>
+                </td>
+                <td class="font-mono font-bold text-slate-900">{{ getVehicle(op.id, selectedDate) || '-' }}</td>
+                <td class="font-semibold text-slate-800">{{ getTask(op.id, selectedDate) || 'Servizio d\'istituto' }}</td>
+              </tr>
+              <tr v-if="activeWorkingOperators.length === 0">
+                <td colspan="6" class="text-center py-2 italic text-slate-500">Nessun operatore in servizio per la data odierna.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mb-2">
+          <div class="bg-slate-700 text-white font-bold text-[8pt] uppercase px-2 py-0.2 tracking-wider text-center border border-slate-700">
+            Squadre Operative & Autoveicoli di Pattuglia
+          </div>
+          <div class="border border-slate-400 p-1.5 text-[7.5pt] bg-slate-50/50">
+            <div class="grid grid-cols-2 gap-1.5" v-if="groupedSquadVehicles.length > 0">
+              <div v-for="(item, sIdx) in groupedSquadVehicles" :key="'sqd_' + sIdx" class="flex items-start gap-1">
+                <span class="font-bold text-slate-900 shrink-0">• {{ item.veicolo }}:</span>
+                <span class="text-slate-800 font-medium">{{ item.agenti.join(', ') }} (Turno {{ item.turno }})</span>
+              </div>
+            </div>
+            <p v-else class="italic text-slate-500 text-center py-0.5">Nessuna pattuglia automontata registrata per oggi.</p>
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <div class="bg-slate-700 text-white font-bold text-[8pt] uppercase px-2 py-0.2 tracking-wider text-center border border-slate-700">
+            Attività & Disposizioni Particolari di Servizio
+          </div>
+          <div class="border border-slate-400 p-1.5 text-[7.5pt] bg-white min-h-[30px] space-y-0.5">
+            <div v-for="(act, aIdx) in currentDaySpecialTasks" :key="'act_' + aIdx" class="flex items-start gap-1">
+              <span class="font-black text-slate-900 shrink-0">► {{ act.titolo }}:</span>
+              <span class="text-slate-800">{{ act.desc }} ({{ act.personale }})</span>
+            </div>
+            <p v-if="currentDaySpecialTasks.length === 0" class="italic text-slate-500 py-0.5 text-center">Nessuna disposizione speciale registrata per questa data.</p>
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <div class="bg-slate-700 text-white font-bold text-[8pt] uppercase px-2 py-0.2 tracking-wider text-center border border-slate-700">
+            Variazioni e Note del Responsabile di Turno (Eventuali modifiche in corso d'opera)
+          </div>
+          <div class="border border-slate-400 p-1 bg-white text-[7.5pt]">
+            <div class="h-4 border-b border-dotted border-slate-300"></div>
+            <div class="h-4 border-b border-dotted border-slate-300"></div>
+            <div class="h-4"></div>
+          </div>
+        </div>
+
+        <div class="mb-1.5 border border-slate-300 bg-slate-50 p-1 text-[7pt] flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <span class="font-bold text-slate-700 uppercase">Non in Servizio / Assenti:</span>
+          <span v-for="op in offDutyOperators" :key="'off_' + op.id" class="inline-flex items-center gap-1">
+            <strong class="text-slate-900">{{ op.cognome || '' }}</strong> ({{ getShift(op.id, selectedDate) }})
+          </span>
+          <span v-if="offDutyOperators.length === 0" class="italic text-slate-400">Nessuno</span>
+        </div>
+
+      </div>
+
+      <div class="pt-1.5 border-t-2 border-slate-800 mt-1">
+        <div class="flex justify-between items-center mb-1.5 pb-0.5 border-b border-slate-200 text-[7pt]">
+          <span class="font-bold uppercase text-slate-700">Legenda Codici Turno:</span>
+          <div class="flex items-center gap-1.5">
+            <span class="border px-1 py-0.1 rounded font-bold bg-sky-200 text-sky-950">1 Mattina</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-emerald-200 text-emerald-950">2 Pomeriggio</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-amber-200 text-amber-950">3 Serale</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-purple-900 text-white">SE Serale Est.</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-orange-300 text-orange-950">G Giornaliero</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-pink-200 text-pink-950">J Jolly</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-white text-slate-600">R Riposo</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-purple-200 text-purple-950">F Ferie</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-teal-200 text-teal-950">P Permesso</span>
+            <span class="border px-1 py-0.1 rounded font-bold bg-rose-300 text-rose-950">M Malattia</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-8 text-[8pt] pt-1">
+          <div class="text-center border-t border-dotted border-slate-400 pt-0.5">
+            <span class="text-slate-500 block text-[7pt]">L'Addetto alla Redazione</span>
+            <span class="font-bold text-slate-900">{{ currentUser ? currentUser.cognome : '' }} ({{ currentUser ? currentUser.qualifica : '' }})</span>
+          </div>
+          <div class="text-center border-t border-dotted border-slate-400 pt-0.5">
+            <span class="text-slate-500 block text-[7pt]">Visto del Comandante / Ufficiale di Turno</span>
+            <span class="font-bold text-slate-900 tracking-wider">______________________________</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODELLO UFFICIALE DI STAMPA STATISTICHE -->
+  <div class="print-stats-only bg-white text-slate-950 font-sans p-4">
+    <div class="max-w-4xl mx-auto space-y-4">
+      <div class="text-center border-b pb-3">
+        <h1 class="text-xl font-black uppercase text-slate-900">Comando Polizia Locale Saronno</h1>
+        <p class="text-xs font-bold text-slate-600 mt-1">Riepilogo Statistico Servizi Operativi e Personale</p>
+      </div>
+
+      <div class="grid grid-cols-4 gap-3 text-center text-xs">
+        <div class="p-2 border rounded-lg bg-slate-50"><span class="font-bold block text-slate-500">Servizi Totali</span><span class="text-lg font-black text-blue-600">{{ totalWorkDays }}</span></div>
+        <div class="p-2 border rounded-lg bg-slate-50"><span class="font-bold block text-slate-500">Riposi (R)</span><span class="text-lg font-black text-slate-700">{{ totalRestDays }}</span></div>
+        <div class="p-2 border rounded-lg bg-slate-50"><span class="font-bold block text-slate-500">Ferie (F)</span><span class="text-lg font-black text-purple-600">{{ totalFerieDays }}</span></div>
+        <div class="p-2 border rounded-lg bg-slate-50"><span class="font-bold block text-slate-500">Permessi / 104</span><span class="text-lg font-black text-teal-600">{{ totalPermessoDays + total104Days }}</span></div>
+      </div>
+
+      <table class="w-full text-xs border-collapse print-table">
+        <thead>
+          <tr class="bg-slate-200 text-slate-900 font-bold uppercase text-[8pt]">
+            <th class="p-2 text-left w-36">Operatore</th>
+            <th class="p-2 text-center w-14">Servizio</th>
+            <th class="p-2 text-center w-14">Riposo</th>
+            <th class="p-2 text-center w-14">Ferie</th>
+            <th class="p-2 text-center w-14">Perm.</th>
+            <th class="p-2 text-left">Ripartizione Servizi Operativi Svolti</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="op in computedOperatorStats" :key="'prtstat_' + op.id">
+            <td class="p-2 font-bold">{{ op.cognome }} <span class="text-[7pt] font-normal block">{{ op.qualifica }}</span></td>
+            <td class="p-2 text-center font-bold text-blue-700">{{ op.workDays }}</td>
+            <td class="p-2 text-center">{{ op.restDays }}</td>
+            <td class="p-2 text-center">{{ op.ferieDays }}</td>
+            <td class="p-2 text-center">{{ op.permessoDays + op.l104Days }}</td>
+            <td class="p-2">
+              <span v-for="(count, taskName) in op.tasksBreakdown" :key="taskName" class="inline-block bg-slate-100 border px-1.5 py-0.5 rounded mr-1 mb-1 text-[7.5pt]">
+                <strong>{{ count }}x</strong> {{ taskName }}
+              </span>
+              <span v-if="Object.keys(op.tasksBreakdown).length === 0" class="italic text-slate-400">-</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- MODALI -->
+  <div v-if="modalType === 'swap'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+          <i class="fa-solid fa-repeat text-amber-500"></i> Richiesta Cambio Turno
+        </h3>
+        <button @click="closeModal" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div class="space-y-3.5 text-xs">
+        <div class="p-3 bg-blue-50/60 rounded-xl space-y-2 border border-blue-100">
+          <label class="font-bold text-slate-700 block">Richiedente (Il tuo Turno)</label>
+          <div class="p-2 bg-white border rounded-lg font-bold text-slate-900">
+            {{ currentUser ? currentUser.cognome : '' }} ({{ currentUser ? currentUser.qualifica : '' }})
+          </div>
+          <select v-model="newSwap.requesterDate" class="w-full border rounded-lg p-2.5 bg-white font-bold text-slate-800">
+            <option disabled value="">-- Seleziona la tua data di turno da cedere --</option>
+            <option v-for="d in days" :key="'req_' + d.fullDate" :value="d.fullDate">
+              {{ d.label }} ({{ d.dateShort }}/{{ d.year }}) - Turno attuale: {{ currentUser ? getShift(currentUser.id, d.fullDate) : '' }}
+            </option>
+          </select>
+        </div>
+
+        <div class="p-3 bg-amber-50/60 rounded-xl space-y-2 border border-amber-100">
+          <label class="font-bold text-slate-700 block">Collega con cui effettuare lo scambio</label>
+          <select v-model="newSwap.targetId" class="w-full border rounded-lg p-2.5 bg-white font-bold text-slate-800">
+            <option disabled value="">-- Seleziona il Collega --</option>
+            <option v-for="op in otherOperators" :key="'tar_' + op.id" :value="op.id">
+              {{ op.cognome }} ({{ op.qualifica }})
+            </option>
+          </select>
+          <select v-if="newSwap.targetId" v-model="newSwap.targetDate" class="w-full border rounded-lg p-2.5 bg-white font-bold text-slate-800">
+            <option disabled value="">-- Seleziona la data del collega da assumere --</option>
+            <option v-for="d in days" :key="'tard_' + d.fullDate" :value="d.fullDate">
+              {{ d.label }} ({{ d.dateShort }}/{{ d.year }}) - Turno suo: {{ getShift(newSwap.targetId, d.fullDate) }}
+            </option>
+          </select>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Motivazione Cambio</label>
+          <textarea v-model="newSwap.motivo" rows="2" class="w-full border rounded-xl p-2.5 bg-white leading-relaxed" placeholder="Specificare la motivazione del cambio per il Comando..."></textarea>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t">
+        <button @click="closeModal" class="px-4 py-2 border rounded-xl text-slate-600 hover:bg-slate-50 text-xs font-bold">Annulla</button>
+        <button @click="submitSwapRequest" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs shadow transition">Invia Istanza su Cloud</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="modalType === 'absence'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+          <i class="fa-solid fa-user-clock text-indigo-600"></i> Richiesta Assenza / Permesso
+        </h3>
+        <button @click="closeModal" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div class="space-y-3.5 text-xs">
+        <div class="p-2.5 bg-slate-50 rounded-xl border">
+          <span class="text-slate-500 block text-[10px]">Richiedente:</span>
+          <span class="font-bold text-slate-900 text-sm">{{ currentUser ? currentUser.cognome : '' }} ({{ currentUser ? currentUser.qualifica : '' }})</span>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Tipologia di Assenza</label>
+          <select v-model="newAbsence.tipo" class="w-full border rounded-xl p-2.5 bg-white font-bold text-slate-900 shadow-xs">
+            <option value="RO">Recupero Ore (RO) - con fascia oraria</option>
+            <option value="F">Ferie Ordinarie (F)</option>
+            <option value="P">Permesso Retribuito / Studio / Sindacale (P)</option>
+            <option value="104">Permesso Legge 104 (104)</option>
+            <option value="M">Malattia (M)</option>
+          </select>
+        </div>
+
+        <div v-if="newAbsence.tipo === 'RO'" class="space-y-3 bg-orange-50/70 p-3.5 rounded-xl border border-orange-200">
+          <div>
+            <label class="font-bold text-orange-950 block mb-1">Data del Recupero</label>
+            <input type="date" v-model="newAbsence.data_inizio" class="w-full border rounded-lg p-2 bg-white font-bold">
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="font-bold text-orange-950 block">Fascia Oraria di Assenza</label>
+              <span class="text-[11px] font-bold text-orange-900 bg-orange-200/70 px-2 py-0.5 rounded">
+                Durata: {{ calculateRoDuration }}
+              </span>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <span class="text-[10px] text-slate-500 font-semibold block mb-0.5">Dalle ore:</span>
+                <input type="time" v-model="newAbsence.ora_inizio" class="w-full border rounded-lg p-2 bg-white font-bold text-center">
+              </div>
+              <div>
+                <span class="text-[10px] text-slate-500 font-semibold block mb-0.5">Alle ore:</span>
+                <input type="time" v-model="newAbsence.ora_fine" class="w-full border rounded-lg p-2 bg-white font-bold text-center">
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-1.5 mt-2.5">
+              <span class="text-[10px] text-slate-500 font-semibold">Imposta rapido:</span>
+              <button type="button" @click="setRoHours(1)" class="px-2 py-0.5 bg-white border border-orange-300 rounded text-[10px] font-bold hover:bg-orange-100 transition shadow-xs">+1 Ora</button>
+              <button type="button" @click="setRoHours(2)" class="px-2 py-0.5 bg-white border border-orange-300 rounded text-[10px] font-bold hover:bg-orange-100 transition shadow-xs">+2 Ore</button>
+              <button type="button" @click="setRoHours(3)" class="px-2 py-0.5 bg-white border border-orange-300 rounded text-[10px] font-bold hover:bg-orange-100 transition shadow-xs">+3 Ore</button>
+              <button type="button" @click="setRoHours('all')" class="px-2 py-0.5 bg-white border border-orange-300 rounded text-[10px] font-bold hover:bg-orange-100 transition shadow-xs">Turno Intero</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Dal Giorno</label>
+            <input type="date" v-model="newAbsence.data_inizio" class="w-full border rounded-xl p-2.5 bg-white font-bold">
+          </div>
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Al Giorno</label>
+            <input type="date" v-model="newAbsence.data_fine" class="w-full border rounded-xl p-2.5 bg-white font-bold">
+          </div>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Note o Motivazione</label>
+          <input type="text" v-model="newAbsence.note" class="w-full border rounded-xl p-2.5 bg-white" placeholder="Es. Visita medica / Motivi personali">
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t">
+        <button @click="closeModal" class="px-4 py-2 border rounded-xl text-slate-600 hover:bg-slate-50 text-xs font-bold">Annulla</button>
+        <button @click="submitAbsenceRequest" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs shadow transition">Invia Istanza su Cloud</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="modalType === 'message'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+          <i class="fa-solid fa-paper-plane text-blue-600"></i> Invia Messaggio o Documento
+        </h3>
+        <button @click="closeModal" class="text-slate-400 hover:text-slate-600 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Destinatari</label>
+          <select v-model="newMessage.destinatario_tipo" class="w-full border rounded-xl p-2.5 bg-slate-50 font-bold text-slate-800">
+            <option value="all">📢 TUTTI GLI OPERATORI (Comunicazione Generale)</option>
+            <option value="multiple">👥 PIÙ OPERATORI (Selezione Multipla con Spunte)</option>
+            <option value="single">👤 SINGOLO OPERATORE</option>
+          </select>
+        </div>
+
+        <div v-if="newMessage.destinatario_tipo === 'multiple'" class="space-y-2 bg-blue-50/60 p-3 rounded-xl border border-blue-200">
+          <div class="flex justify-between items-center">
+            <span class="font-bold text-blue-950">Seleziona colleghi ({{ newMessage.targetIds.length }} selezionati):</span>
+            <div class="space-x-2 text-[11px]">
+              <button type="button" @click="selectAllOperators" class="text-blue-700 font-bold hover:underline">Tutti</button>
+              <button type="button" @click="deselectAllOperators" class="text-slate-500 font-bold hover:underline">Deseleziona</button>
+            </div>
+          </div>
+          <div class="max-h-40 overflow-y-auto custom-scroll border rounded-xl p-2 bg-white space-y-1">
+            <label v-for="op in otherOperators" :key="'msgop_' + op.id" class="flex items-center gap-2.5 p-1.5 hover:bg-slate-50 rounded-lg cursor-pointer transition select-none">
+              <input type="checkbox" :value="op.id" v-model="newMessage.targetIds" class="w-4 h-4 rounded text-blue-600 focus:ring-blue-500">
+              <span class="font-bold text-slate-900">{{ op.cognome }}</span>
+              <span class="text-[10px] text-slate-500 font-medium">({{ op.qualifica }} - Matr. {{ op.matricola }})</span>
+            </label>
+          </div>
+        </div>
+
+        <div v-if="newMessage.destinatario_tipo === 'single'">
+          <label class="font-bold text-slate-700 block mb-1">Seleziona Destinatario</label>
+          <select v-model="newMessage.targetId" class="w-full border rounded-xl p-2.5 bg-white font-semibold">
+            <option disabled value="">-- Scegli Destinatario --</option>
+            <option v-for="op in otherOperators" :key="'sgl_' + op.id" :value="op.id">{{ op.cognome }} ({{ op.qualifica }})</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Oggetto / Titolo</label>
+          <input type="text" v-model="newMessage.titolo" placeholder="Es. Comunicazione di servizio" class="w-full border rounded-xl p-2.5 font-bold bg-white">
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Testo del Messaggio</label>
+          <textarea v-model="newMessage.testo" rows="4" class="w-full border rounded-xl p-2.5 bg-white leading-relaxed" placeholder="Scrivi il corpo della comunicazione..."></textarea>
+        </div>
+
+        <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+          <label class="font-bold text-slate-700 flex items-center gap-1.5">
+            <i class="fa-solid fa-paperclip text-blue-600"></i> Allega File o Documento (Max 5 MB)
+          </label>
+          <input type="file" id="msgFileInput" @change="handleFileUpload" class="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+          <div v-if="newMessage.allegato_nome" class="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200 mt-1 text-xs">
+            <span class="font-bold text-slate-800 truncate"><i class="fa-regular fa-file text-blue-600 mr-1"></i> {{ newMessage.allegato_nome }}</span>
+            <button @click="clearAttachment" class="text-rose-600 hover:underline font-bold text-[11px] ml-2">Rimuovi</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t">
+        <button @click="closeModal" class="px-4 py-2 border rounded-xl text-slate-600 hover:bg-slate-50 text-xs font-bold">Annulla</button>
+        <button @click="submitMessage" :disabled="isSendingMessage" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs shadow transition flex items-center gap-1.5">
+          <i v-if="isSendingMessage" class="fa-solid fa-spinner fa-spin"></i>
+          <span>{{ isSendingMessage ? 'Invio in corso...' : 'Invia Messaggio' }}</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="modalType === 'taskDetail'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 space-y-4">
+      <div class="flex justify-between items-start border-b pb-3">
+        <div class="flex items-center gap-3">
+          <div class="bg-blue-600 text-white p-2.5 rounded-xl shadow">
+            <i class="fa-solid fa-clipboard-check text-lg"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-slate-900 text-base">{{ activeTaskOp.cognome }} ({{ activeTaskOp.qualifica }})</h3>
+            <p class="text-xs font-semibold" :class="activeTaskDay.isRed ? 'text-rose-600' : 'text-slate-500'">
+              {{ activeTaskDay.label }} - {{ activeTaskDay.fullDate }} {{ activeTaskDay.isHoliday ? '(Festivo)' : '' }}
+            </p>
+          </div>
+        </div>
+        <button @click="closeModal" class="text-slate-400 hover:text-slate-600 text-lg p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-3.5 text-xs">
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Turno di Servizio</label>
+            <select v-if="currentUser.ruolo === 'admin'" v-model="editTaskForm.turno" class="w-full border rounded-xl p-2.5 bg-white font-bold text-slate-900 shadow-xs">
+              <option v-for="t in shiftTypes" :key="t.code" :value="t.code">{{ t.code }} - {{ t.name }}</option>
+            </select>
+            <div v-else class="p-2.5 bg-slate-100 rounded-xl font-bold border text-slate-900 flex items-center justify-between">
+              <span>{{ getShift(activeTaskOp.id, activeTaskDay.fullDate) }}</span>
+              <span class="text-[10px] text-slate-400 font-normal">Codice Turno</span>
+            </div>
+          </div>
+
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Veicolo Assegnato</label>
+            <input v-if="currentUser.ruolo === 'admin'" type="text" v-model="editTaskForm.veicolo" placeholder="Es. ALFA 7" class="w-full border rounded-xl p-2.5 bg-white font-bold text-slate-900 shadow-xs">
+            <div v-else class="p-2.5 bg-slate-100 rounded-xl font-bold border text-slate-900 truncate">
+              <span v-if="getVehicle(activeTaskOp.id, activeTaskDay.fullDate)" class="bg-slate-800 text-white px-2 py-0.5 rounded text-xs">
+                {{ getVehicle(activeTaskOp.id, activeTaskDay.fullDate) }}
+              </span>
+              <span v-else class="text-slate-400 italic">Nessun veicolo</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="font-bold text-slate-800 text-xs">Descrizione Servizio da svolgere</label>
+            <span v-if="currentUser.ruolo === 'admin'" class="text-[11px] text-blue-600 font-semibold">Preset rapidi:</span>
+          </div>
+
+          <div v-if="currentUser.ruolo === 'admin'" class="flex flex-wrap gap-1.5 mb-2.5">
+            <button v-for="p in taskPresets" :key="p" @click="applyTaskPreset(p)" 
+                    class="bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 text-[10px] px-2.5 py-1 rounded-lg border border-slate-200 transition font-medium">
+              + {{ p }}
+            </button>
+          </div>
+
+          <textarea v-if="currentUser.ruolo === 'admin'" v-model="editTaskForm.servizio" rows="5" class="w-full border rounded-xl p-3 bg-white leading-relaxed text-xs shadow-xs focus:outline-blue-500" placeholder="Descrivi il servizio assegnato..."></textarea>
+          
+          <div v-else class="p-4 bg-slate-50 border border-slate-200 rounded-xl leading-relaxed text-slate-800 text-sm whitespace-pre-wrap min-h-[100px] font-medium shadow-xs">
+            {{ getTask(activeTaskOp.id, activeTaskDay.fullDate) || 'Nessuna specifica o mansione particolare inserita per questa data.' }}
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t">
+        <button @click="closeModal" class="px-4 py-2 border rounded-xl text-slate-700 hover:bg-slate-50 font-bold text-xs">Chiudi</button>
+        <button v-if="currentUser.ruolo === 'admin'" @click="saveTaskAssignment" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs shadow transition flex items-center gap-1.5">
+          <i class="fa-solid fa-floppy-disk"></i> Salva su Cloud
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="modalType === 'generateMonth'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+          <i class="fa-solid fa-calendar-plus text-emerald-600"></i> Generatore Turnazione Comando PL
+        </h3>
+        <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Mese da generare</label>
+          <select v-model.number="genMonth" class="w-full border rounded-lg p-2.5 bg-slate-50 font-bold">
+            <option value="1">Gennaio</option>
+            <option value="2">Febbraio</option>
+            <option value="3">Marzo</option>
+            <option value="4">Aprile</option>
+            <option value="5">Maggio</option>
+            <option value="6">Giugno</option>
+            <option value="7">Luglio</option>
+            <option value="8">Agosto</option>
+            <option value="9">Settembre</option>
+            <option value="10">Ottobre</option>
+            <option value="11">Novembre</option>
+            <option value="12">Dicembre</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Anno</label>
+          <input type="number" v-model.number="genYear" class="w-full border rounded-lg p-2.5 bg-slate-50 font-bold">
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Metodo di Turnazione</label>
+          <select v-model="genPattern" class="w-full border rounded-lg p-2.5 bg-slate-50 font-bold text-blue-700">
+            <option value="pl_reale">★ Rotazione Ufficiale Comando (4 Squadre + 4 Ufficiali + Speciali)</option>
+            <option value="R">Tutti a Riposo (R)</option>
+            <option value="vuoto">Caselle vuote</option>
+          </select>
+        </div>
+
+        <div class="text-[11px] text-slate-600 bg-slate-50 p-3 rounded-xl border space-y-1 leading-relaxed">
+          <span class="font-bold text-blue-900 block">Regole integrate:</span>
+          • Squadre 1, 2, 3, 4: Ciclo continuo (3, 2, 1, J) sincronizzato dal 7/09/2026.<br>
+          • 4 Ufficiali: Nicoloso, Molino, Piuri, Gargiulo a rotazione continua.<br>
+          • Comandante e Op. 32: Giornaliero (G) Lun–Ven.<br>
+          • Op. 34: Giornaliero (G) Lun, Gio e Ven.<br>
+          • Op. 2: 1, R, 1, 2, 1, 2, R (ultima domenica = 1).<br>
+          • <strong>Milletich</strong>: Mattino (1) Lun-Sab (Ufficio Pass - Sportello), Domenica (R).
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2 border-t">
+        <button @click="closeModal" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-slate-50 text-xs">Annulla</button>
+        <button @click="generateAndSaveMonth" :disabled="isGenerating" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-xs shadow transition flex items-center gap-1.5">
+          <i v-if="isGenerating" class="fa-solid fa-spinner fa-spin"></i>
+          <span>{{ isGenerating ? 'Salvataggio su Cloud...' : 'Genera & Salva su Supabase' }}</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="selectedStatOp" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4">
+      <div class="flex justify-between items-start border-b pb-3">
+        <div>
+          <h3 class="font-bold text-slate-900 text-base flex items-center gap-2">
+            <i class="fa-solid fa-id-card text-emerald-600"></i> {{ selectedStatOp.cognome }}
+          </h3>
+          <p class="text-xs text-slate-500">{{ selectedStatOp.qualifica }} - Matricola {{ selectedStatOp.matricola }}</p>
+        </div>
+        <button @click="selectedStatOp = null" class="text-slate-400 hover:text-slate-600 text-lg p-1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+          <div class="bg-blue-50 border border-blue-200 p-2 rounded-xl">
+            <span class="text-slate-500 text-[10px] uppercase font-bold block">Servizio</span>
+            <span class="text-base font-black text-blue-700">{{ selectedStatOp.workDays }} gg</span>
+          </div>
+          <div class="bg-purple-50 border border-purple-200 p-2 rounded-xl">
+            <span class="text-slate-500 text-[10px] uppercase font-bold block">Ferie</span>
+            <span class="text-base font-black text-purple-700">{{ selectedStatOp.ferieDays }} gg</span>
+          </div>
+          <div class="bg-teal-50 border border-teal-200 p-2 rounded-xl">
+            <span class="text-slate-500 text-[10px] uppercase font-bold block">Permessi (P)</span>
+            <span class="text-base font-black text-teal-700">{{ selectedStatOp.permessoDays }} gg</span>
+          </div>
+          <div class="bg-sky-50 border border-sky-200 p-2 rounded-xl">
+            <span class="text-slate-500 text-[10px] uppercase font-bold block">104</span>
+            <span class="text-base font-black text-sky-700">{{ selectedStatOp.l104Days }} gg</span>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="font-bold text-slate-800 text-xs mb-2 flex items-center gap-1.5">
+            <i class="fa-solid fa-list-check text-blue-600"></i> Servizi Operativi Svolti:
+          </h4>
+          <div v-if="Object.keys(selectedStatOp.tasksBreakdown).length > 0" class="space-y-1.5 max-h-48 overflow-y-auto custom-scroll border rounded-xl p-2.5 bg-slate-50">
+            <div v-for="(count, taskName) in selectedStatOp.tasksBreakdown" :key="taskName"
+                 class="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-200">
+              <span class="font-bold text-slate-800">{{ taskName }}</span>
+              <span class="bg-blue-600 text-white px-2 py-0.5 rounded font-mono font-bold text-xs">{{ count }} volte</span>
+            </div>
+          </div>
+          <p v-else class="text-slate-400 italic text-center py-4">Nessun servizio operativo registrato per questo periodo.</p>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-3 border-t">
+        <button @click="selectedStatOp = null" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold text-xs shadow">Chiudi Scheda</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="modalType === 'operatorForm'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+          <i class="fa-solid fa-user-gear text-blue-600"></i> {{ opForm.id ? 'Modifica Operatore' : 'Nuovo Operatore' }}
+        </h3>
+        <button @click="closeModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Matricola</label>
+            <input type="text" v-model="opForm.matricola" placeholder="Es. 38" class="w-full border rounded-lg p-2 font-bold bg-white">
+          </div>
+          <div class="col-span-2">
+            <label class="font-bold text-slate-700 block mb-1">Cognome</label>
+            <input type="text" v-model="opForm.cognome" placeholder="Es. ROSSI" class="w-full border rounded-lg p-2 font-bold uppercase bg-white">
+          </div>
+        </div>
+
+        <div>
+          <label class="font-bold text-slate-700 block mb-1">Qualifica / Grado</label>
+          <input type="text" v-model="opForm.qualifica" placeholder="Es. AGENTE, ASSISTENTE SC., VICE COMM." class="w-full border rounded-lg p-2 font-semibold uppercase bg-white">
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">Ruolo Sistema</label>
+            <select v-model="opForm.ruolo" class="w-full border rounded-lg p-2 font-bold bg-white">
+              <option value="operatore">Operatore</option>
+              <option value="admin">Ufficiale (Admin)</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">PIN di Accesso</label>
+            <input type="text" v-model="opForm.pin" placeholder="1234" class="w-full border rounded-lg p-2 font-mono text-center bg-white font-bold">
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t">
+        <button @click="closeModal" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-slate-50 text-xs">Annulla</button>
+        <button @click="saveOperatorToSupabase" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs shadow transition">Salva su Cloud</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="modalType === 'changePin'" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-xs w-full p-5 space-y-4 text-center">
+      <h3 class="font-bold text-slate-800 text-sm">Modifica il tuo PIN personale</h3>
+      <input type="password" v-model="updatedPin" placeholder="Nuovo PIN (es. 4 cifre)" class="w-full text-center border p-2 rounded-lg font-mono text-lg tracking-widest">
+      <div class="flex gap-2 pt-2">
+        <button @click="closeModal" class="flex-1 py-1.5 border rounded-lg text-xs font-bold">Annulla</button>
+        <button @click="saveNewPin" class="flex-1 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold shadow">Salva PIN</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const SUPABASE_URL = "https://zfubmnkmflaguwmwiiwf.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_ElkDTQ_RKM2E4jO2ce6nWw_6MkE85wz";
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { createApp } = Vue;
+
+  function isItalianHoliday(dt) {
+    const m = dt.getMonth() + 1;
+    const d = dt.getDate();
+    const y = dt.getFullYear();
+
+    const fixed = [
+      "1-1", "1-6", "4-25", "5-1", "6-2",
+      "8-15", "11-1", "12-8", "12-25", "12-26"
+    ];
+    if (fixed.includes(`${m}-${d}`)) return true;
+
+    const a = y % 19;
+    const b = Math.floor(y / 100);
+    const c = y % 100;
+    const d_div = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d_div - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m_div = Math.floor((a + 11 * h + 22 * l) / 451);
+    const pMonth = Math.floor((h + l - 7 * m_div + 114) / 31);
+    const pDay = ((h + l - 7 * m_div + 114) % 31) + 1;
+
+    if (m === pMonth && d === pDay) return true;
+    const pasquetta = new Date(y, pMonth - 1, pDay + 1);
+    if (m === (pasquetta.getMonth() + 1) && d === pasquetta.getDate()) return true;
+
+    return false;
+  }
+
+  createApp({
+    data() {
+      return {
+        currentTab: 'calendario',
+        settingsSubTab: 'personale',
+        messageFilter: 'ricevuti',
+        modalType: null,
+        cloudConnected: false,
+        cloudStatusText: 'Connessione in corso...',
+
+        currentUser: null,
+        loginOpId: '',
+        loginPin: '',
+        loginError: false,
+        updatedPin: '',
+
+        statsMonthFilter: 'ALL',
+        selectedStatOp: null,
+        selectedInterrogationOpId: '',
+
+        activeToasts: [],
+        toastCounter: 0,
+
+        searchFilter: '',
+        selectedMonthFilter: '2026-09',
+        selectedDate: '2026-09-01',
+
+        genMonth: 10,
+        genYear: 2026,
+        genPattern: 'pl_reale',
+        isGenerating: false,
+
+        activeTaskOp: {},
+        activeTaskDay: {},
+        editTaskForm: { turno: '1', veicolo: '', servizio: '' },
+
+        opForm: { id: null, matricola: '', cognome: '', qualifica: '', ruolo: 'operatore', pin: '1234' },
+
+        taskPresets: [
+          'C.O.R.',
+          'Posto Controllo',
+          'Controllo Varchi ZTL',
+          'Pattuglia Automontata - Sinistri',
+          'Servizio Mercato Settimanale',
+          'Controlli RPU Stazione',
+          'Pulizia Strade',
+          'Ufficio Viabilità',
+          'Ufficio Pass - Sportello',
+          'Notifiche e Accertamenti'
+        ],
+
+        operators: [],
+        days: [],
+        turniMap: {},
+
+        shiftSwaps: [],
+        absenceRequests: [],
+
+        messages: [],
+        isSendingMessage: false,
+        newMessage: {
+          destinatario_tipo: 'all',
+          targetId: '',
+          targetIds: [],
+          titolo: '',
+          testo: '',
+          allegato_nome: '',
+          allegato_tipo: '',
+          allegato_dati: ''
+        },
+
+        newSwap: { requesterDate: '', targetId: '', targetDate: '', motivo: '' },
+        newAbsence: { tipo: 'RO', data_inizio: '2026-09-01', data_fine: '2026-09-01', ora_inizio: '08:00', ora_fine: '09:00', note: '' },
+
+        shiftTypes: [
+          { code: '1', name: 'Mattina', colorClass: 'bg-sky-200 text-sky-950 border-sky-400 font-black' },
+          { code: '2', name: 'Pomeriggio', colorClass: 'bg-emerald-200 text-emerald-950 border-emerald-400 font-black' },
+          { code: '3', name: 'Serale', colorClass: 'bg-amber-200 text-amber-950 border-amber-400 font-black' },
+          { code: 'SE', name: 'Serale Esteso', colorClass: 'bg-purple-900 text-white border-purple-950 font-black' },
+          { code: 'G', name: 'Giornaliero', colorClass: 'bg-orange-300 text-orange-950 border-orange-500 font-black' },
+          { code: 'J', name: 'Jolly', colorClass: 'bg-pink-200 text-pink-950 border-pink-400 font-black' },
+          { code: 'R', name: 'Riposo', colorClass: 'bg-white text-slate-500 border-slate-300 font-bold' },
+          { code: 'F', name: 'Ferie', colorClass: 'bg-purple-200 text-purple-950 border-purple-300' },
+          { code: 'P', name: 'Permesso', colorClass: 'bg-teal-200 text-teal-950 border-teal-300 font-bold' },
+          { code: '104', name: 'Permesso 104', colorClass: 'bg-sky-100 text-sky-900 border-sky-300 font-bold' },
+          { code: 'M', name: 'Malattia', colorClass: 'bg-rose-300 text-rose-950 border-rose-500 font-black' },
+          { code: 'RO', name: 'Recupero Ore', colorClass: 'bg-orange-100 text-orange-900 border-orange-300 font-bold' }
+        ]
+      };
+    },
+    computed: {
+      safeOperators() {
+        if (!Array.isArray(this.operators)) return [];
+        const ordered = [...this.operators].sort((a, b) => {
+          const getCustomPriority = (op) => {
+            const cog = (op.cognome || '').toUpperCase();
+            if (cog.includes('BORSANI')) return 1;
+            if (cog.includes('MAGNI')) return 2;
+            if (cog.includes('NICOLOSO')) return 3;
+            if (cog.includes('MOLINO')) return 4;
+            if (cog.includes('PIURI')) return 5;
+            if (cog.includes('GARGIULO')) return 6;
+            return 10 + (op.id || 0);
+          };
+          return getCustomPriority(a) - getCustomPriority(b);
+        });
+        return ordered.filter(op => op && op.id && (op.cognome || op.qualifica));
+      },
+      currentYearFromSelectedDate() {
+        return this.selectedDate ? this.selectedDate.split('-')[0] : '2026';
+      },
+      formattedSelectedDateLong() {
+        const dObj = this.getDayObj(this.selectedDate);
+        if (!dObj) return this.selectedDate;
+        const months = ['', 'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+        return `${dObj.label} ${dObj.day} ${months[dObj.month]} ${dObj.year}`;
+      },
+      activeWorkingOperators() {
+        return this.sortedDayOperators.filter(op => {
+          const t = this.getShift(op.id, this.selectedDate);
+          return !['R', 'F', 'M', 'P', '104'].includes(t);
+        });
+      },
+      offDutyOperators() {
+        return this.sortedDayOperators.filter(op => {
+          const t = this.getShift(op.id, this.selectedDate);
+          return ['R', 'F', 'M', 'P', '104'].includes(t);
+        });
+      },
+      groupedSquadVehicles() {
+        const vMap = {};
+        this.activeWorkingOperators.forEach(op => {
+          const veic = this.getVehicle(op.id, this.selectedDate);
+          const turno = this.getShift(op.id, this.selectedDate);
+          if (veic) {
+            if (!vMap[veic]) {
+              vMap[veic] = { veicolo: veic, turno: turno, agenti: [] };
+            }
+            vMap[veic].agenti.push(`${op.qualifica || ''} ${op.cognome || ''}`);
+          }
+        });
+        return Object.values(vMap);
+      },
+      currentDaySpecialTasks() {
+        const list = [];
+        this.activeWorkingOperators.forEach(op => {
+          const task = this.getTask(op.id, this.selectedDate);
+          if (task && task.trim() !== '' && task !== "Servizio d'istituto") {
+            const parts = task.split('-');
+            const titolo = parts[0].trim();
+            const desc = parts.length > 1 ? parts.slice(1).join('-').trim() : 'Servizio operativo predisposto';
+            list.push({
+              titolo: titolo,
+              desc: desc,
+              personale: `${op.qualifica || ''} ${op.cognome || ''}`
+            });
+          }
+        });
+        return list;
+      },
+
+      computedOperatorStats() {
+        return this.safeOperators.map(op => {
+          let workDays = 0;
+          let restDays = 0;
+          let ferieDays = 0;
+          let roDays = 0;
+          let permessoDays = 0;
+          let l104Days = 0;
+          let malattiaDays = 0;
+          const tasksBreakdown = {};
+
+          Object.keys(this.turniMap).forEach(key => {
+            if (key.startsWith(`${op.id}_`)) {
+              const dateStr = key.replace(`${op.id}_`, '');
+              
+              if (this.statsMonthFilter === 'ALL' || dateStr.startsWith(this.statsMonthFilter)) {
+                const item = this.turniMap[key];
+                const turno = item.turno;
+                const servizio = (item.servizio || '').trim();
+
+                if (['1', '2', '3', 'SE', 'G', 'J'].includes(turno)) {
+                  workDays++;
+                } else if (turno === 'R') {
+                  restDays++;
+                } else if (turno === 'F') {
+                  ferieDays++;
+                } else if (turno === 'RO') {
+                  roDays++;
+                } else if (turno === 'P') {
+                  permessoDays++;
+                } else if (turno === '104') {
+                  l104Days++;
+                } else if (turno === 'M') {
+                  malattiaDays++;
+                }
+
+                if (servizio && 
+                    !['Assenza', 'Ferie', 'Permesso', 'Verbali', 'Ufficio Verbali', 'Ufficio Viabilità'].some(x => servizio.toLowerCase().includes(x.toLowerCase())) &&
+                    !['VICE COMM.', 'COMM.', 'COMANDANTE', 'SOV.', 'ASS.'].some(x => servizio.toUpperCase() === x)) {
+                  let matched = false;
+                  this.taskPresets.forEach(preset => {
+                    if (servizio.toLowerCase().includes(preset.toLowerCase())) {
+                      tasksBreakdown[preset] = (tasksBreakdown[preset] || 0) + 1;
+                      matched = true;
+                    }
+                  });
+                  if (!matched && servizio.length > 2) {
+                    const shortName = servizio.split('-')[0].trim();
+                    tasksBreakdown[shortName] = (tasksBreakdown[shortName] || 0) + 1;
+                  }
+                }
+              }
+            }
+          });
+
+          return {
+            id: op.id,
+            cognome: op.cognome || '',
+            qualifica: op.qualifica || '',
+            matricola: op.matricola || '',
+            workDays,
+            restDays,
+            ferieDays,
+            roDays,
+            permessoDays,
+            l104Days,
+            malattiaDays,
+            tasksBreakdown
+          };
+        });
+      },
+
+      interrogatedOperatorStats() {
+        if (!this.selectedInterrogationOpId) return null;
+        return this.computedOperatorStats.find(o => o.id === parseInt(this.selectedInterrogationOpId)) || null;
+      },
+
+      totalWorkDays() { return this.computedOperatorStats.reduce((acc, o) => acc + o.workDays, 0); },
+      totalRestDays() { return this.computedOperatorStats.reduce((acc, o) => acc + o.restDays, 0); },
+      totalFerieDays() { return this.computedOperatorStats.reduce((acc, o) => acc + o.ferieDays, 0); },
+      totalRoDays() { return this.computedOperatorStats.reduce((acc, o) => acc + o.roDays, 0); },
+      totalPermessoDays() { return this.computedOperatorStats.reduce((acc, o) => acc + o.permessoDays, 0); },
+      total104Days() { return this.computedOperatorStats.reduce((acc, o) => acc + o.l104Days, 0); },
+      totalMalattiaDays() { return this.computedOperatorStats.reduce((acc, o) => acc + o.malattiaDays, 0); },
+
+      otherOperators() {
+        if (!this.currentUser) return this.safeOperators;
+        return this.safeOperators.filter(o => o.id !== this.currentUser.id);
+      },
+      calculateRoDuration() {
+        if (!this.newAbsence.ora_inizio || !this.newAbsence.ora_fine) return 'Non definita';
+        const [h1, m1] = this.newAbsence.ora_inizio.split(':').map(Number);
+        const [h2, m2] = this.newAbsence.ora_fine.split(':').map(Number);
+        let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+        if (diff <= 0) return 'Orario non valido';
+        const hours = Math.floor(diff / 60);
+        const mins = diff % 60;
+        if (hours > 0 && mins > 0) return `${hours}h ${mins}m`;
+        if (hours > 0) return `${hours} ${hours === 1 ? 'ora' : 'ore'}`;
+        return `${mins} min`;
+      },
+
+      sortedDayOperators() {
+        return [...this.safeOperators].sort((a, b) => {
+          const shiftA = this.getShift(a.id, this.selectedDate) || 'R';
+          const shiftB = this.getShift(b.id, this.selectedDate) || 'R';
+
+          const isOffA = ['R', 'F', 'P', 'M', '104'].includes(shiftA);
+          const isOffB = ['R', 'F', 'P', 'M', '104'].includes(shiftB);
+
+          // 1. Assenti in fondo
+          if (!isOffA && isOffB) return -1;
+          if (isOffA && !isOffB) return 1;
+
+          // 2. Ordinamento per Turno (1, 2, 3, SE, G, J)
+          if (!isOffA && !isOffB) {
+            const shiftOrder = { '1': 1, '2': 2, '3': 3, 'SE': 4, 'G': 5, 'J': 6, 'RO': 7, '$': 8, 'K': 9 };
+            const sOrderA = shiftOrder[shiftA] || 50;
+            const sOrderB = shiftOrder[shiftB] || 50;
+            if (sOrderA !== sOrderB) return sOrderA - sOrderB;
+          }
+
+          // 3. RAGGRUPPAMENTO RIGOROSO PER VEICOLO
+          const veicA = (this.getVehicle(a.id, this.selectedDate) || '').trim().replace(/\s+/g, ' ').toUpperCase();
+          const veicB = (this.getVehicle(b.id, this.selectedDate) || '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+          if (veicA !== veicB) {
+            if (!veicA) return 1;  // Chi non ha veicolo va in fondo
+            if (!veicB) return -1;
+            return veicA.localeCompare(veicB);
+          }
+
+          // 4. A parità di veicolo, ufficiali in testa
+          const rankA = this.getRoleRank(a);
+          const rankB = this.getRoleRank(b);
+          if (rankA !== rankB) return rankA - rankB;
+
+          // 5. Ordinamento alfabetico per cognome
+          return (a.cognome || '').localeCompare(b.cognome || '');
+        });
+      },
+
+      pendingSwapsCount() { return this.shiftSwaps.filter(s => s.stato === 'In Attesa').length; },
+      pendingAbsencesCount() { return this.absenceRequests.filter(a => a.stato === 'In Attesa').length; },
+      
+      receivedMessages() {
+        if (!this.currentUser) return [];
+        return this.messages.filter(m => m.destinatario_id === this.currentUser.id);
+      },
+      sentMessages() {
+        if (!this.currentUser) return [];
+        return this.messages.filter(m => m.mittente_id === this.currentUser.id);
+      },
+      unreadMessagesCount() {
+        return this.receivedMessages.filter(m => !m.letto).length;
+      },
+      currentMessageList() {
+        return this.messageFilter === 'ricevuti' ? this.receivedMessages : this.sentMessages;
+      },
+
+      filteredOperators() {
+        if (!this.searchFilter) return this.safeOperators;
+        const q = this.searchFilter.toLowerCase();
+        return this.safeOperators.filter(o => 
+          (o.cognome || '').toLowerCase().includes(q) || 
+          (o.qualifica || '').toLowerCase().includes(q)
+        );
+      },
+      availableMonths() {
+        const monthNames = ['', 'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+        const map = {};
+        this.days.forEach(d => {
+          const k = `${d.year}-${String(d.month).padStart(2, '0')}`;
+          if (!map[k]) {
+            map[k] = { key: k, label: `${monthNames[d.month]} ${d.year}`, daysCount: 0 };
+          }
+          map[k].daysCount++;
+        });
+        return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
+      },
+      visibleDays() {
+        return this.days.filter(d => {
+          const k = `${d.year}-${String(d.month).padStart(2, '0')}`;
+          return k === this.selectedMonthFilter;
+        });
+      }
+    },
+    async created() {
+      const savedShifts = localStorage.getItem('pl_shift_types');
+      if (savedShifts) { try { this.shiftTypes = JSON.parse(savedShifts); } catch(e) {} }
+
+      const savedPresets = localStorage.getItem('pl_task_presets');
+      if (savedPresets) { try { this.taskPresets = JSON.parse(savedPresets); } catch(e) {} }
+
+      const now = new Date();
+      const curMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      this.selectedMonthFilter = curMonthKey;
+      this.selectedDate = `${curMonthKey}-${String(now.getDate()).padStart(2, '0')}`;
+
+      this.buildMonthDays(now.getFullYear(), now.getMonth() + 1);
+      await this.fetchOperators();
+      await this.fetchTurni();
+      await this.fetchRequests();
+      await this.fetchMessages();
+      this.checkSavedSession();
+      this.setupRealtime();
+    },
+    methods: {
+      getRoleRank(op) {
+        if (!op) return 2;
+        const qual = (op.qualifica || '').toUpperCase();
+        const cognome = (op.cognome || '').toUpperCase();
+
+        if (qual.includes('COMM') || qual.includes('UFFICIALE') || qual.includes('COMANDANTE') || cognome.includes('BORSANI') || cognome.includes('MOLINO') || cognome.includes('NICOLOSO') || cognome.includes('PIURI') || cognome.includes('GARGIULO')) {
+          return 1;
+        }
+        if (qual.includes('AMM') || qual.includes('IST') || cognome.includes('MILLETICH') || cognome.includes('NAZERI') || cognome.includes('DI GRAZIA') || cognome.includes('PAPARONE') || cognome.includes('DURANTE')) {
+          return 3;
+        }
+        return 2;
+      },
+
+      countSpecificTask(keyword) {
+        let count = 0;
+        Object.keys(this.turniMap).forEach(key => {
+          const item = this.turniMap[key];
+          const dateStr = key.split('_')[1];
+          if (this.statsMonthFilter === 'ALL' || dateStr.startsWith(this.statsMonthFilter)) {
+            const serv = (item.servizio || '').toLowerCase();
+            if (serv.includes(keyword.toLowerCase())) {
+              count++;
+            }
+          }
+        });
+        return count;
+      },
+
+      isOperatorOffDuty(op) {
+        const t = this.getShift(op.id, this.selectedDate);
+        return ['R', 'F', 'P', 'M', '104'].includes(t);
+      },
+
+      onMonthFilterChange() {
+        this.$nextTick(() => {
+          if (this.$refs.tableScroll) this.$refs.tableScroll.scrollLeft = 0;
+        });
+      },
+
+      openDetailedStats(op) {
+        this.selectedStatOp = op;
+      },
+
+      scrollDays(offset) {
+        const el = this.$refs.tableScroll;
+        if (el) {
+          el.scrollBy({ left: offset, behavior: 'smooth' });
+        }
+      },
+
+      scrollToToday() {
+        const today = new Date();
+        const y = today.getFullYear();
+        const m = String(today.getMonth() + 1).padStart(2, '0');
+        const d = String(today.getDate()).padStart(2, '0');
+        const todayKey = `${y}-${m}`;
+        const todayFullDate = `${todayKey}-${d}`;
+
+        if (this.selectedMonthFilter !== todayKey) {
+          this.selectedMonthFilter = todayKey;
+          this.buildMonthDays(y, today.getMonth() + 1);
+        }
+
+        this.$nextTick(() => {
+          const colEl = document.getElementById('col_' + todayFullDate);
+          if (colEl) {
+            colEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          } else {
+            const dayIdx = this.visibleDays.findIndex(item => item.fullDate === todayFullDate);
+            const el = this.$refs.tableScroll;
+            if (dayIdx !== -1 && el) {
+              const scrollPos = Math.max(0, (dayIdx * 56) - (el.clientWidth / 2) + 60);
+              el.scrollTo({ left: scrollPos, behavior: 'smooth' });
+            }
+          }
+        });
+      },
+
+      printDailySheet() {
+        document.body.className = "bg-slate-100 text-slate-800 font-sans min-h-screen printing-daily";
+        window.print();
+        setTimeout(() => { document.body.className = "bg-slate-100 text-slate-800 font-sans min-h-screen"; }, 500);
+      },
+
+      printStatsSheet() {
+        document.body.className = "bg-slate-100 text-slate-800 font-sans min-h-screen printing-stats";
+        window.print();
+        setTimeout(() => { document.body.className = "bg-slate-100 text-slate-800 font-sans min-h-screen"; }, 500);
+      },
+
+      printCalendarSheet() {
+        document.body.className = "bg-slate-100 text-slate-800 font-sans min-h-screen printing-calendar";
+        window.print();
+        setTimeout(() => { document.body.className = "bg-slate-100 text-slate-800 font-sans min-h-screen"; }, 500);
+      },
+
+      playNotificationSound() {
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (!AudioContext) return;
+          const ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+          osc.frequency.setValueAtTime(880, ctx.currentTime + 0.08);
+          gain.gain.setValueAtTime(0.15, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        } catch (e) {}
+      },
+
+      triggerPushNotification(title, message, type = 'info') {
+        this.playNotificationSound();
+
+        if ('Notification' in window) {
+          if (Notification.permission === 'granted') {
+            try { new Notification(title, { body: message, icon: 'https://cdn-icons-png.flaticon.com/512/942/942748.png' }); } catch (e) {}
+          } else if (Notification.permission === 'default') {
+            Notification.requestPermission().then(perm => {
+              if (perm === 'granted') {
+                try { new Notification(title, { body: message }); } catch (e) {}
+              }
+            });
+          }
+        }
+
+        const id = ++this.toastCounter;
+        let icon = 'fa-solid fa-bell';
+        let color = 'bg-blue-600';
+        if (type === 'swap') { icon = 'fa-solid fa-repeat'; color = 'bg-amber-600'; }
+        if (type === 'absence') { icon = 'fa-solid fa-user-clock'; color = 'bg-indigo-600'; }
+        if (type === 'message') { icon = 'fa-solid fa-envelope'; color = 'bg-blue-600'; }
+
+        this.activeToasts.unshift({ id, title, message, icon, color });
+        setTimeout(() => { this.removeToast(id); }, 7000);
+      },
+
+      removeToast(id) {
+        this.activeToasts = this.activeToasts.filter(t => t.id !== id);
+      },
+
+      formatTimestamp(ts) {
+        if (!ts) return '';
+        const dt = new Date(ts);
+        return dt.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      },
+
+      selectAllOperators() {
+        this.newMessage.targetIds = this.otherOperators.map(o => o.id);
+      },
+      deselectAllOperators() {
+        this.newMessage.targetIds = [];
+      },
+
+      async fetchMessages() {
+        const { data, error } = await sb.from('messaggi').select('*').order('id', { ascending: false });
+        if (!error && data) {
+          this.messages = data;
+        }
+      },
+      handleFileUpload(e) {
+        const file = e.target.files[0];
+        if (!file) {
+          this.clearAttachment();
+          return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          alert('Il file selezionato supera la dimensione massima di 5 MB.');
+          e.target.value = '';
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          this.newMessage.allegato_nome = file.name;
+          this.newMessage.allegato_tipo = file.type;
+          this.newMessage.allegato_dati = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      },
+      clearAttachment() {
+        this.newMessage.allegato_nome = '';
+        this.newMessage.allegato_tipo = '';
+        this.newMessage.allegato_dati = '';
+        const input = document.getElementById('msgFileInput');
+        if (input) input.value = '';
+      },
+      async submitMessage() {
+        if (!this.newMessage.titolo.trim() || !this.newMessage.testo.trim()) {
+          alert('Inserire oggetto e testo del messaggio.');
+          return;
+        }
+
+        this.isSendingMessage = true;
+        const rows = [];
+
+        if (this.newMessage.destinatario_tipo === 'all') {
+          this.otherOperators.forEach(op => {
+            rows.push({
+              mittente_id: this.currentUser.id,
+              destinatario_id: op.id,
+              titolo: this.newMessage.titolo.trim(),
+              testo: this.newMessage.testo.trim(),
+              allegato_nome: this.newMessage.allegato_nome || null,
+              allegato_tipo: this.newMessage.allegato_tipo || null,
+              allegato_dati: this.newMessage.allegato_dati || null,
+              letto: false
+            });
+          });
+        } else if (this.newMessage.destinatario_tipo === 'multiple') {
+          if (!this.newMessage.targetIds || this.newMessage.targetIds.length === 0) {
+            alert('Selezionare almeno un collega destinatario.');
+            this.isSendingMessage = false;
+            return;
+          }
+          this.newMessage.targetIds.forEach(opId => {
+            rows.push({
+              mittente_id: this.currentUser.id,
+              destinatario_id: parseInt(opId),
+              titolo: this.newMessage.titolo.trim(),
+              testo: this.newMessage.testo.trim(),
+              allegato_nome: this.newMessage.allegato_nome || null,
+              allegato_tipo: this.newMessage.allegato_tipo || null,
+              allegato_dati: this.newMessage.allegato_dati || null,
+              letto: false
+            });
+          });
+        } else {
+          if (!this.newMessage.targetId) {
+            alert('Selezionare l\'operatore destinatario.');
+            this.isSendingMessage = false;
+            return;
+          }
+          rows.push({
+            mittente_id: this.currentUser.id,
+            destinatario_id: parseInt(this.newMessage.targetId),
+            titolo: this.newMessage.titolo.trim(),
+            testo: this.newMessage.testo.trim(),
+            allegato_nome: this.newMessage.allegato_nome || null,
+            allegato_tipo: this.newMessage.allegato_tipo || null,
+            allegato_dati: this.newMessage.allegato_dati || null,
+            letto: false
+          });
+        }
+
+        const { error } = await sb.from('messaggi').insert(rows);
+        this.isSendingMessage = false;
+
+        if (!error) {
+          alert('Messaggio inviato con successo!');
+          this.newMessage = {
+            destinatario_tipo: 'all',
+            targetId: '',
+            targetIds: [],
+            titolo: '',
+            testo: '',
+            allegato_nome: '',
+            allegato_tipo: '',
+            allegato_dati: ''
+          };
+          this.closeModal();
+          await this.fetchMessages();
+        } else {
+          alert('Errore durante l\'invio: ' + error.message);
+        }
+      },
+      async markAsRead(msg) {
+        await sb.from('messaggi').update({ letto: true }).eq('id', msg.id);
+        msg.letto = true;
+      },
+      async deleteMessage(msg) {
+        if (confirm('Eliminare definitivamente questo messaggio?')) {
+          await sb.from('messaggi').delete().eq('id', msg.id);
+          this.messages = this.messages.filter(m => m.id !== msg.id);
+        }
+      },
+
+      setRoHours(val) {
+        if (val === 'all') {
+          this.newAbsence.ora_inizio = '07:30';
+          this.newAbsence.ora_fine = '13:30';
+          return;
+        }
+        if (!this.newAbsence.ora_inizio) this.newAbsence.ora_inizio = '08:00';
+        const [h, m] = this.newAbsence.ora_inizio.split(':').map(Number);
+        const endH = (h + val).toString().padStart(2, '0');
+        const endM = m.toString().padStart(2, '0');
+        this.newAbsence.ora_fine = `${endH}:${endM}`;
+      },
+      extractFascia(note) {
+        if (!note || !note.includes('[Fascia:')) return '';
+        const start = note.indexOf('[Fascia:') + 8;
+        const end = note.indexOf(']', start);
+        return note.substring(start, end).trim();
+      },
+      extractCleanNote(note) {
+        if (!note) return '';
+        if (note.includes('| Note:')) return note.split('| Note:')[1].trim();
+        if (note.includes('[Fascia:')) return note.replace(/\[Fascia:[^\]]+\]/g, '').trim();
+        return note;
+      },
+
+      openOperatorModal(op = null) {
+        if (op) {
+          this.opForm = { ...op };
+        } else {
+          this.opForm = { id: null, matricola: '', cognome: '', qualifica: '', ruolo: 'operatore', pin: '1234' };
+        }
+        this.modalType = 'operatorForm';
+      },
+      async saveOperatorToSupabase() {
+        if (!this.opForm.matricola || !this.opForm.cognome || !this.opForm.qualifica) {
+          alert('Compilare Matricola, Cognome e Qualifica.');
+          return;
+        }
+
+        const payload = {
+          matricola: this.opForm.matricola.trim(),
+          cognome: this.opForm.cognome.trim().toUpperCase(),
+          qualifica: this.opForm.qualifica.trim().toUpperCase(),
+          ruolo: this.opForm.ruolo,
+          pin: this.opForm.pin.trim() || '1234'
+        };
+
+        let res;
+        if (this.opForm.id) {
+          res = await sb.from('operatori').update(payload).eq('id', this.opForm.id);
+        } else {
+          res = await sb.from('operatori').insert([payload]);
+        }
+
+        if (!res.error) {
+          alert('Operatore salvato con successo su Supabase!');
+          this.closeModal();
+          await this.fetchOperators();
+        } else {
+          alert('Errore salvataggio: ' + res.error.message);
+        }
+      },
+      async deleteOperator(op) {
+        if (confirm(`Sei sicuro di voler eliminare l'operatore ${op.cognome} (${op.qualifica})?`)) {
+          const { error } = await sb.from('operatori').delete().eq('id', op.id);
+          if (!error) {
+            alert('Operatore eliminato con successo.');
+            await this.fetchOperators();
+            await this.fetchTurni();
+          } else {
+            alert('Errore eliminazione: ' + error.message);
+          }
+        }
+      },
+
+      openNewShiftTypePrompt() {
+        const code = prompt("Inserisci el codice breve del turno (es. NOTTE, REP):");
+        if (!code) return;
+        const name = prompt("Inserisci la descrizione del turno:", code);
+        if (!name) return;
+
+        this.shiftTypes.push({
+          code: code.trim(),
+          name: name.trim(),
+          colorClass: 'bg-indigo-100 text-indigo-900 border-indigo-300 font-black'
+        });
+        localStorage.setItem('pl_shift_types', JSON.stringify(this.shiftTypes));
+        alert('Nuovo codice turno aggiunto!');
+      },
+      removeShiftType(index) {
+        if (confirm(`Rimuovere il codice turno ${this.shiftTypes[index].code}?`)) {
+          this.shiftTypes.splice(index, 1);
+          localStorage.setItem('pl_shift_types', JSON.stringify(this.shiftTypes));
+        }
+      },
+      addPresetPrompt() {
+        const val = prompt("Inserisci il nome del nuovo preset mansione (es. Controllo Parco):");
+        if (val && val.trim()) {
+          this.taskPresets.push(val.trim());
+          localStorage.setItem('pl_task_presets', JSON.stringify(this.taskPresets));
+        }
+      },
+      removePreset(index) {
+        this.taskPresets.splice(index, 1);
+        localStorage.setItem('pl_task_presets', JSON.stringify(this.taskPresets));
+      },
+
+      buildMonthDays(year, month) {
+        const weekdays = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
+        const daysInMonth = new Date(year, month, 0).getDate();
+
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dStr = String(day).padStart(2, '0');
+          const mStr = String(month).padStart(2, '0');
+          const fullDate = `${year}-${mStr}-${dStr}`;
+
+          const exists = this.days.find(x => x.fullDate === fullDate);
+          if (!exists) {
+            const dt = new Date(year, month - 1, day);
+            const wDay = dt.getDay();
+            const isSun = (wDay === 0);
+            const isSat = (wDay === 6);
+            const isHol = isItalianHoliday(dt);
+
+            this.days.push({
+              year: year,
+              month: month,
+              day: day,
+              label: `${dStr} ${weekdays[wDay]}`,
+              dateShort: `${dStr}/${mStr}`,
+              fullDate: fullDate,
+              isSunday: isSun,
+              isSaturday: isSat,
+              isHoliday: isHol,
+              isRed: isSun || isHol
+            });
+          }
+        }
+        this.days.sort((a, b) => a.fullDate.localeCompare(b.fullDate));
+      },
+
+      async fetchOperators() {
+        try {
+          const { data, error } = await sb.from('operatori').select('*').order('id');
+          if (!error && data) {
+            this.operators = data;
+            this.cloudConnected = true;
+            this.cloudStatusText = 'Online (Supabase)';
+          } else {
+            this.cloudStatusText = 'Errore Connessione';
+          }
+        } catch (e) {
+          this.cloudStatusText = 'Non connesso';
+        }
+      },
+
+      async fetchTurni() {
+        try {
+          let allRows = [];
+          let from = 0;
+          const step = 1000;
+
+          while (true) {
+            const { data, error } = await sb.from('turni').select('*').range(from, from + step - 1);
+            if (error || !data || data.length === 0) break;
+            allRows.push(...data);
+            if (data.length < step) break;
+            from += step;
+          }
+
+          const map = {};
+          const monthsProcessed = new Set();
+          allRows.forEach(t => {
+            const cleanDate = typeof t.data === 'string' ? t.data.split('T')[0].split(' ')[0].trim() : t.data;
+            map[`${t.operatore_id}_${cleanDate}`] = {
+              id: t.id,
+              turno: t.turno,
+              servizio: t.servizio || '',
+              veicolo: t.veicolo || ''
+            };
+
+            const parts = String(cleanDate).split('-');
+            if (parts.length === 3) {
+              const ym = `${parts[0]}-${parts[1]}`;
+              if (!monthsProcessed.has(ym)) {
+                monthsProcessed.add(ym);
+                this.buildMonthDays(parseInt(parts[0]), parseInt(parts[1]));
+              }
+            }
+          });
+          this.turniMap = map;
+        } catch (e) {
+          console.error(e);
+        }
+      },
+
+      async fetchRequests() {
+        const { data: swaps } = await sb.from('richieste_cambio').select('*').order('id', { ascending: false });
+        if (swaps) this.shiftSwaps = swaps;
+
+        const { data: absences } = await sb.from('richieste_assenza').select('*').order('id', { ascending: false });
+        if (absences) this.absenceRequests = absences;
+      },
+
+      setupRealtime() {
+        sb.channel('realtime_dispatcher')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messaggi' }, async (payload) => {
+            await this.fetchMessages();
+            const msg = payload.new;
+            if (this.currentUser && msg.destinatario_id === this.currentUser.id) {
+              const mittente = this.getOpName(msg.mittente_id);
+              this.triggerPushNotification(
+                `Messaggio da ${mittente}`,
+                `${msg.titolo}: ${msg.testo.substring(0, 50)}...`,
+                'message'
+              );
+            }
+          })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'richieste_cambio' }, async (payload) => {
+            await this.fetchRequests();
+            const req = payload.new;
+            const richiedente = this.getOpName(req.richiedente_id);
+            if (this.currentUser && ['BORSANI', 'MOLINO'].includes(this.currentUser.cognome.toUpperCase())) {
+              this.triggerPushNotification(
+                'Richiesta Cambio per il Comando',
+                `L'operatore ${richiedente} ha richiesto uno scambio turno.`,
+                'swap'
+              );
+            }
+          })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'richieste_assenza' }, async (payload) => {
+            await this.fetchRequests();
+            const req = payload.new;
+            const opName = this.getOpName(req.operatore_id);
+            if (this.currentUser && ['BORSANI', 'MOLINO'].includes(this.currentUser.cognome.toUpperCase())) {
+              let tipoTesto = req.tipo;
+              if (req.tipo === 'RO') tipoTesto = 'Recupero Ore';
+              if (req.tipo === 'P') tipoTesto = 'Permesso Retribuito/Studio';
+              if (req.tipo === '104') tipoTesto = 'Permesso 104';
+              this.triggerPushNotification(
+                'Richiesta Assenza per il Comando',
+                `L'operatore ${opName} ha inoltrato richiesta di ${tipoTesto}.`,
+                'absence'
+              );
+            }
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'turni' }, async () => {
+            await this.fetchTurni();
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'operatori' }, async () => {
+            await this.fetchOperators();
+          })
+          .subscribe();
+      },
+
+      checkSavedSession() {
+        const savedId = localStorage.getItem('pl_user_id');
+        if (savedId && this.safeOperators.length > 0) {
+          const found = this.safeOperators.find(o => o.id === parseInt(savedId));
+          if (found) {
+            this.currentUser = found;
+            this.fetchMessages();
+            if ('Notification' in window && Notification.permission === 'default') {
+              Notification.requestPermission();
+            }
+          }
+        }
+      },
+      performLogin() {
+        if (!this.loginOpId) return;
+        const found = this.safeOperators.find(o => o.id === parseInt(this.loginOpId));
+        if (found && found.pin === this.loginPin.trim()) {
+          this.currentUser = found;
+          localStorage.setItem('pl_user_id', found.id);
+          this.loginError = false;
+          this.fetchMessages();
+          if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+          }
+        } else {
+          this.loginError = true;
+        }
+      },
+      logout() {
+        this.currentUser = null;
+        localStorage.removeItem('pl_user_id');
+        this.loginPin = '';
+      },
+      openChangePinModal() {
+        this.updatedPin = '';
+        this.modalType = 'changePin';
+      },
+      async saveNewPin() {
+        if (!this.updatedPin) return;
+        await sb.from('operatori').update({ pin: this.updatedPin }).eq('id', this.currentUser.id);
+        this.currentUser.pin = this.updatedPin;
+        alert('PIN aggiornato con successo!');
+        this.closeModal();
+      },
+
+      async generateAndSaveMonth() {
+        const y = parseInt(this.genYear);
+        const m = parseInt(this.genMonth);
+        this.isGenerating = true;
+
+        try {
+          this.buildMonthDays(y, m);
+          const mKey = `${y}-${String(m).padStart(2, '0')}`;
+          const targetDays = this.days.filter(d => `${d.year}-${String(d.month).padStart(2, '0')}` === mKey);
+
+          const baseMonday = new Date(2026, 8, 7);
+
+          const squadWeekPatterns = [
+            ['R', '3', '3', '3', 'SE', 'SE', 'R'],
+            ['R', '2', '2', '2', '2', '2', 'R'],
+            ['1', '1', '1', '1', '1', 'R', 'R'],
+            ['2', 'J', 'J', 'R', 'R', '1', 'G']
+          ];
+
+          const uffWeekPatterns = [
+            ['1', '2', 'R', '1', 'SE', '2', 'R'],
+            ['2', '1', '1', '3', 'R', 'R', 'G'],
+            ['R', '3', '2', '2', '1', 'SE', 'R'],
+            ['1', '2', '3', 'R', '2', '1', 'R']
+          ];
+
+          const lastSunDay = [...targetDays].filter(d => d.isSunday).pop();
+          const lastSundayDate = lastSunDay ? lastSunDay.fullDate : null;
+
+          const rowsToUpsert = [];
+
+          this.safeOperators.forEach((op) => {
+            const mat = parseInt(op.matricola) || 0;
+            const cognomeUpper = (op.cognome || '').trim().toUpperCase();
+
+            targetDays.forEach((d) => {
+              let shiftVal = 'R';
+              let taskVal = '';
+
+              if (this.genPattern === 'pl_reale') {
+                const curDate = new Date(d.year, d.month - 1, d.day);
+                const jsDay = curDate.getDay();
+                const dayIndex = (jsDay === 0) ? 6 : jsDay - 1;
+
+                const diffMs = curDate.getTime() - baseMonday.getTime();
+                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                const weeksPassed = Math.floor(diffDays / 7);
+
+                if (cognomeUpper.includes('NICOLOSO') || mat === 3) {
+                  const uffWeekIdx = ((weeksPassed % 4) + 4) % 4;
+                  shiftVal = uffWeekPatterns[uffWeekIdx][dayIndex];
+                }
+                else if (cognomeUpper.includes('MOLINO') || mat === 4) {
+                  const uffWeekIdx = (((weeksPassed + 1) % 4) + 4) % 4;
+                  shiftVal = uffWeekPatterns[uffWeekIdx][dayIndex];
+                }
+                else if (cognomeUpper.includes('PIURI') || mat === 5) {
+                  const uffWeekIdx = (((weeksPassed + 2) % 4) + 4) % 4;
+                  shiftVal = uffWeekPatterns[uffWeekIdx][dayIndex];
+                }
+                else if (cognomeUpper.includes('GARGIULO') || mat === 38 || mat === 39) {
+                  const uffWeekIdx = (((weeksPassed + 3) % 4) + 4) % 4;
+                  shiftVal = uffWeekPatterns[uffWeekIdx][dayIndex];
+                }
+                else if (cognomeUpper.includes('MILLETICH')) {
+                  if (dayIndex >= 0 && dayIndex <= 5) {
+                    shiftVal = '1';
+                    taskVal = 'Ufficio Pass - Sportello';
+                  } else {
+                    shiftVal = 'R';
+                  }
+                }
+                else if (mat >= 6 && mat <= 12) {
+                  const currentWeekIdx = ((weeksPassed % 4) + 4) % 4;
+                  shiftVal = squadWeekPatterns[currentWeekIdx][dayIndex];
+                }
+                else if (mat >= 13 && mat <= 18) {
+                  const currentWeekIdx = (((weeksPassed + 1) % 4) + 4) % 4;
+                  shiftVal = squadWeekPatterns[currentWeekIdx][dayIndex];
+                }
+                else if (mat >= 19 && mat <= 25) {
+                  const currentWeekIdx = (((weeksPassed + 2) % 4) + 4) % 4;
+                  shiftVal = squadWeekPatterns[currentWeekIdx][dayIndex];
+                }
+                else if (mat >= 26 && mat <= 31) {
+                  const currentWeekIdx = (((weeksPassed + 3) % 4) + 4) % 4;
+                  shiftVal = squadWeekPatterns[currentWeekIdx][dayIndex];
+                }
+                else if (cognomeUpper.includes('BORSANI') || mat === 1 || mat === 32) {
+                  shiftVal = (dayIndex >= 0 && dayIndex <= 4) ? 'G' : 'R';
+                }
+                else if (mat === 34) {
+                  shiftVal = (dayIndex === 0 || dayIndex === 3 || dayIndex === 4) ? 'G' : 'R';
+                }
+                else if (cognomeUpper.includes('MAGNI') || mat === 2) {
+                  const patOp2 = ['1', 'R', '1', '2', '1', '2', 'R'];
+                  shiftVal = patOp2[dayIndex];
+                  if (d.fullDate === lastSundayDate) {
+                    shiftVal = '1';
+                  }
+                }
+                else {
+                  shiftVal = (dayIndex >= 0 && dayIndex <= 4) ? 'G' : 'R';
+                }
+
+              } else if (this.genPattern === 'R') {
+                shiftVal = 'R';
+              } else if (this.genPattern === 'vuoto') {
+                shiftVal = '';
+              }
+
+              const existing = this.turniMap[`${op.id}_${d.fullDate}`] || {};
+
+              rowsToUpsert.push({
+                operatore_id: op.id,
+                data: d.fullDate,
+                turno: shiftVal,
+                servizio: taskVal ? taskVal : (existing.servizio || ''),
+                veicolo: existing.veicolo || ''
+              });
+            });
+          });
+
+          if (rowsToUpsert.length > 0) {
+            const chunkSize = 50;
+            for (let i = 0; i < rowsToUpsert.length; i += chunkSize) {
+              const chunk = rowsToUpsert.slice(i, i + chunkSize);
+              const { error } = await sb.from('turni').upsert(chunk, { onConflict: 'operatore_id,data' });
+              if (error) throw error;
+            }
+            await this.fetchTurni();
+          }
+
+          this.selectedMonthFilter = mKey;
+          this.closeModal();
+          alert(`Mese ${m}/${y} generato con successo!`);
+        } catch (err) {
+          alert('Errore generazione: ' + (err.message || err));
+        } finally {
+          this.isGenerating = false;
+        }
+      },
+
+      getShift(opId, fullDate) {
+        const item = this.turniMap[`${opId}_${fullDate}`];
+        return item ? item.turno : 'R';
+      },
+      getVehicle(opId, fullDate) {
+        const item = this.turniMap[`${opId}_${fullDate}`];
+        return item ? item.veicolo : '';
+      },
+      getTask(opId, fullDate) {
+        const item = this.turniMap[`${opId}_${fullDate}`];
+        return item ? item.servizio : '';
+      },
+      hasTaskOrVehicle(opId, fullDate) {
+        return Boolean(this.getVehicle(opId, fullDate) || this.getTask(opId, fullDate));
+      },
+      getTaskTooltip(opId, fullDate) {
+        const v = this.getVehicle(opId, fullDate);
+        const s = this.getTask(opId, fullDate);
+        let txt = `Turno: ${this.getShift(opId, fullDate)}`;
+        if (v) txt += ` | Veicolo: ${v}`;
+        if (s) txt += ` | ${s}`;
+        return txt;
+      },
+      getShiftStyle(code) {
+        const found = this.shiftTypes.find(s => s.code === code);
+        return found ? found.colorClass : 'bg-white text-slate-400 border-slate-200';
+      },
+      getOpName(id) {
+        const found = this.safeOperators.find(o => o.id === parseInt(id));
+        return found ? found.cognome : 'N/D';
+      },
+      getDayObj(fullDate) {
+        return this.days.find(d => d.fullDate === fullDate) || this.days[0];
+      },
+
+      openTaskDetail(op, day) {
+        this.activeTaskOp = op;
+        this.activeTaskDay = day;
+        this.editTaskForm = {
+          turno: this.getShift(op.id, day.fullDate),
+          veicolo: this.getVehicle(op.id, day.fullDate),
+          servizio: this.getTask(op.id, day.fullDate)
+        };
+        this.modalType = 'taskDetail';
+      },
+      applyTaskPreset(preset) {
+        if (!this.editTaskForm.servizio) {
+          this.editTaskForm.servizio = preset;
+        } else {
+          this.editTaskForm.servizio += ` - ${preset}`;
+        }
+      },
+
+      async saveTaskAssignment() {
+        const opId = this.activeTaskOp.id;
+        const dateStr = this.activeTaskDay.fullDate;
+        const existing = this.turniMap[`${opId}_${dateStr}`];
+
+        let saveError = null;
+
+        if (existing && existing.id) {
+          const { error } = await sb.from('turni').update({
+            turno: this.editTaskForm.turno,
+            servizio: this.editTaskForm.servizio || '',
+            veicolo: this.editTaskForm.veicolo || ''
+          }).eq('id', existing.id);
+          saveError = error;
+        } else {
+          const { data: updatedRows, error: updateErr } = await sb.from('turni').update({
+            turno: this.editTaskForm.turno,
+            servizio: this.editTaskForm.servizio || '',
+            veicolo: this.editTaskForm.veicolo || ''
+          }).eq('operatore_id', opId).eq('data', dateStr).select();
+
+          if (updateErr) {
+            saveError = updateErr;
+          } else if (!updatedRows || updatedRows.length === 0) {
+            const { data: insertedRows, error: insertErr } = await sb.from('turni').insert([{
+              operatore_id: opId,
+              data: dateStr,
+              turno: this.editTaskForm.turno,
+              servizio: this.editTaskForm.servizio || '',
+              veicolo: this.editTaskForm.veicolo || ''
+            }]).select();
+            saveError = insertErr;
+            if (insertedRows && insertedRows.length > 0) {
+              if (!this.turniMap[`${opId}_${dateStr}`]) this.turniMap[`${opId}_${dateStr}`] = {};
+              this.turniMap[`${opId}_${dateStr}`].id = insertedRows[0].id;
+            }
+          } else {
+            if (!this.turniMap[`${opId}_${dateStr}`]) this.turniMap[`${opId}_${dateStr}`] = {};
+            this.turniMap[`${opId}_${dateStr}`].id = updatedRows[0].id;
+          }
+        }
+
+        if (!saveError) {
+          if (!this.turniMap[`${opId}_${dateStr}`]) this.turniMap[`${opId}_${dateStr}`] = {};
+          this.turniMap[`${opId}_${dateStr}`].turno = this.editTaskForm.turno;
+          this.turniMap[`${opId}_${dateStr}`].servizio = this.editTaskForm.servizio || '';
+          this.turniMap[`${opId}_${dateStr}`].veicolo = this.editTaskForm.veicolo || '';
+          this.closeModal();
+        } else {
+          alert('Errore salvataggio: ' + saveError.message);
+        }
+      },
+
+      openModal(type) { 
+        this.modalType = type;
+        if (type === 'message') {
+          this.newMessage.targetIds = [];
+        }
+      },
+      closeModal() { 
+        this.modalType = null; 
+        this.clearAttachment();
+      },
+
+      async submitSwapRequest() {
+        if (!this.newSwap.requesterDate || !this.newSwap.targetId || !this.newSwap.targetDate) {
+          alert('Compilare tutti i campi.');
+          return;
+        }
+        const reqTurno = this.getShift(this.currentUser.id, this.newSwap.requesterDate);
+        const tarTurno = this.getShift(this.newSwap.targetId, this.newSwap.targetDate);
+
+        const { error } = await sb.from('richieste_cambio').insert({
+          richiedente_id: this.currentUser.id,
+          richiedente_data: this.newSwap.requesterDate,
+          richiedente_turno: reqTurno,
+          target_id: parseInt(this.newSwap.targetId),
+          target_data: this.newSwap.targetDate,
+          target_turno: tarTurno,
+          motivo: this.newSwap.motivo,
+          stato: 'In Attesa'
+        });
+
+        if (!error) {
+          alert('Richiesta cambio inviata al Comando!');
+          this.closeModal();
+          await this.fetchRequests();
+        } else {
+          alert('Errore invio richiesta: ' + error.message);
+        }
+      },
+
+      async approveSwap(swap) {
+        const t1 = this.getShift(swap.richiedente_id, swap.richiedente_data);
+        const t2 = this.getShift(swap.target_id, swap.target_data);
+        
+        const v1 = this.getVehicle(swap.richiedente_id, swap.richiedente_data);
+        const v2 = this.getVehicle(swap.target_id, swap.target_data);
+        const s1 = this.getTask(swap.richiedente_id, swap.richiedente_data);
+        const s2 = this.getTask(swap.target_id, swap.target_data);
+
+        const isSameDay = (swap.richiedente_data === swap.target_data);
+
+        await sb.from('turni').update({ 
+          turno: t2,
+          veicolo: isSameDay ? v2 : v1,
+          servizio: isSameDay ? s2 : s1
+        }).eq('operatore_id', swap.richiedente_id).eq('data', swap.richiedente_data);
+
+        await sb.from('turni').update({ 
+          turno: t1,
+          veicolo: isSameDay ? v1 : v2,
+          servizio: isSameDay ? s1 : s2
+        }).eq('operatore_id', swap.target_id).eq('data', swap.target_data);
+
+        await sb.from('richieste_cambio').update({ stato: 'Approvato' }).eq('id', swap.id);
+        await this.fetchTurni();
+        await this.fetchRequests();
+      },
+
+      async rejectSwap(swap) {
+        await sb.from('richieste_cambio').update({ stato: 'Respinto' }).eq('id', swap.id);
+        await this.fetchRequests();
+      },
+
+      async submitAbsenceRequest() {
+        let finalNote = this.newAbsence.note || '';
+        let dataFine = this.newAbsence.data_fine;
+
+        if (this.newAbsence.tipo === 'RO') {
+          dataFine = this.newAbsence.data_inizio;
+          const fascia = `[Fascia: dalle ${this.newAbsence.ora_inizio} alle ${this.newAbsence.ora_fine} (${this.calculateRoDuration})]`;
+          finalNote = finalNote ? `${fascia} | Note: ${finalNote}` : fascia;
+        }
+
+        const { error } = await sb.from('richieste_assenza').insert({
+          operatore_id: this.currentUser.id,
+          tipo: this.newAbsence.tipo,
+          data_inizio: this.newAbsence.data_inizio,
+          data_fine: dataFine,
+          note: finalNote,
+          stato: 'In Attesa'
+        });
+        
+        if (!error) {
+          alert('Istanza assenza inviata con successo al Comando!');
+          this.closeModal();
+          await this.fetchRequests();
+        } else {
+          alert('Errore invio assenza: ' + error.message);
+        }
+      },
+
+      async approveAbsence(item) {
+        const start = new Date(item.data_inizio);
+        const end = new Date(item.data_fine);
+
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dStr = d.toISOString().split('T')[0];
+          
+          let descServizio = `Assenza (${item.tipo})`;
+          if (item.tipo === 'RO' && item.note && item.note.includes('[Fascia:')) {
+            const fascia = this.extractFascia(item.note);
+            descServizio = `Recupero Ore (${fascia})`;
+          } else if (item.tipo === 'P') {
+            descServizio = `Permesso (${item.note || 'Generico'})`;
+          } else if (item.tipo === '104') {
+            descServizio = `Permesso Legge 104`;
+          }
+
+          const { data: upd } = await sb.from('turni').update({
+            turno: item.tipo,
+            servizio: descServizio,
+            veicolo: ''
+          }).eq('operatore_id', item.operatore_id).eq('data', dStr).select();
+
+          if (!upd || upd.length === 0) {
+            await sb.from('turni').insert([{
+              operatore_id: item.operatore_id,
+              data: dStr,
+              turno: item.tipo,
+              servizio: descServizio,
+              veicolo: ''
+            }]);
+          }
+        }
+
+        await sb.from('richieste_assenza').update({ stato: 'Approvato' }).eq('id', item.id);
+        await this.fetchTurni();
+        await this.fetchRequests();
+      },
+
+      async rejectAbsence(item) {
+        await sb.from('richieste_assenza').update({ stato: 'Respinto' }).eq('id', item.id);
+        await this.fetchRequests();
+      }
+    }
+  }).mount('#app');
+</script>
+</body>
+</html>
